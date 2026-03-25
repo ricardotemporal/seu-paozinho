@@ -113,7 +113,7 @@ def buscar_historico(data_inicio: date, data_fim: date) -> pd.DataFrame:
         supabase.table("vendas")
         .select("id, data_venda, quantidade, valor_total, produtos(nome)")
         .gte("data_venda", inicio_str)
-        .lte("data_fim",   fim_str)      # nota: nome correto da coluna
+        .lte("data_venda", fim_str)
         .order("id", desc=True)
         .execute()
     )
