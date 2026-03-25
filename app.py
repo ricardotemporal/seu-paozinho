@@ -1,3 +1,4 @@
+import re
 import streamlit as st
 from supabase import create_client, Client
 from datetime import datetime, date, timedelta
@@ -13,23 +14,19 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# CSS para melhorar experiência mobile
 st.markdown("""
 <style>
-    /* Aumenta botões para toque no celular */
     .stButton > button {
         height: 3rem;
         font-size: 1rem;
         font-weight: 600;
     }
-    /* Métricas com fundo levemente colorido */
     [data-testid="metric-container"] {
         background-color: #f9f9f9;
         border-radius: 12px;
         padding: 12px;
         border: 1px solid #eee;
     }
-    /* Esconde menu hamburguer no celular */
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
 </style>
@@ -40,7 +37,6 @@ st.markdown("""
 # =============================================================================
 @st.cache_resource
 def init_supabase() -> Client:
-    """Inicializa a conexão com o Supabase usando os segredos do Streamlit."""
     url = st.secrets["SUPABASE_URL"]
     key = st.secrets["SUPABASE_KEY"]
     return create_client(url, key)
@@ -50,25 +46,22 @@ supabase = init_supabase()
 # =============================================================================
 # FUNÇÕES DE BANCO DE DADOS — PRODUTOS
 # =============================================================================
-@st.cache_data(ttl=300)  # Cache de 5 minutos para não sobrecarregar o banco
+@st.cache_data(ttl=300)
 def buscar_produtos():
-    """Retorna todos os produtos cadastrados."""
     res = supabase.table("produtos").select("*").order("id").execute()
-    return res.data  # Lista de dicionários
+    return res.data
 
 def atualizar_produto(id_produto: int, novo_preco: float, novo_custo: float):
-    """Atualiza preço e custo de um produto."""
     supabase.table("produtos").update({
         "preco_venda": novo_preco,
         "custo_estimado": novo_custo
     }).eq("id", id_produto).execute()
-    st.cache_data.clear()  # Limpa o cache para refletir a mudança
+    st.cache_data.clear()
 
 # =============================================================================
 # FUNÇÕES DE BANCO DE DADOS — VENDAS
 # =============================================================================
 def salvar_venda(produto_id: int, quantidade: int, valor_total: float):
-    """Registra uma nova venda no banco."""
     supabase.table("vendas").insert({
         "data_venda": datetime.now().isoformat(),
         "produto_id": produto_id,
@@ -77,11 +70,6 @@ def salvar_venda(produto_id: int, quantidade: int, valor_total: float):
     }).execute()
 
 def buscar_metricas(data_inicio: date, data_fim: date) -> tuple:
-    """
-    Retorna (faturamento, custo, lucro) para o período informado.
-    Faz a junção com a tabela de produtos para calcular o CMV real.
-    """
-    # Converte datas para ISO string com hora (início do dia / fim do dia)
     inicio_str = datetime.combine(data_inicio, datetime.min.time()).isoformat()
     fim_str    = datetime.combine(data_fim,    datetime.max.time()).isoformat()
 
@@ -95,17 +83,14 @@ def buscar_metricas(data_inicio: date, data_fim: date) -> tuple:
 
     faturamento = 0.0
     custo       = 0.0
-
     for venda in res.data:
         faturamento += venda["valor_total"]
         custo_unit   = venda["produtos"]["custo_estimado"] if venda["produtos"] else 0
         custo       += custo_unit * venda["quantidade"]
 
-    lucro = faturamento - custo
-    return faturamento, custo, lucro
+    return faturamento, custo, faturamento - custo
 
 def buscar_historico(data_inicio: date, data_fim: date) -> pd.DataFrame:
-    """Retorna o histórico de vendas do período como DataFrame."""
     inicio_str = datetime.combine(data_inicio, datetime.min.time()).isoformat()
     fim_str    = datetime.combine(data_fim,    datetime.max.time()).isoformat()
 
@@ -118,54 +103,48 @@ def buscar_historico(data_inicio: date, data_fim: date) -> pd.DataFrame:
         .execute()
     )
 
-    # Achata o resultado para um DataFrame legível
     rows = []
     for v in res.data:
         rows.append({
-            "ID":          v["id"],
-            "Data":        v["data_venda"][:16].replace("T", " "),
-            "Produto":     v["produtos"]["nome"] if v["produtos"] else "—",
-            "Qtd":         v["quantidade"],
-            "Total (R$)":  f"R$ {v['valor_total']:.2f}"
+            "ID":         v["id"],
+            "Data":       v["data_venda"][:16].replace("T", " "),
+            "Produto":    v["produtos"]["nome"] if v["produtos"] else "—",
+            "Qtd":        v["quantidade"],
+            "Total (R$)": f"R$ {v['valor_total']:.2f}"
         })
-
     return pd.DataFrame(rows)
 
 def excluir_venda(id_venda: int):
-    """Remove uma venda pelo ID."""
     supabase.table("vendas").delete().eq("id", id_venda).execute()
 
 # =============================================================================
 # HELPER: SELETOR DE PERÍODO
 # =============================================================================
 def seletor_periodo(chave: str) -> tuple[date, date]:
-    """
-    Renderiza um seletor de período reutilizável.
-    Retorna (data_inicio, data_fim).
-    """
-    hoje = date.today()
+    hoje  = date.today()
     opcoes = {
-        "📅 Hoje":        (hoje, hoje),
-        "🗓️ Esta semana": (hoje - timedelta(days=hoje.weekday()), hoje),
-        "📆 Este mês":    (hoje.replace(day=1), hoje),
-        "🗃️ Tudo":        (date(2000, 1, 1), hoje),
+        "📅 Hoje":          (hoje, hoje),
+        "🗓️ Esta semana":   (hoje - timedelta(days=hoje.weekday()), hoje),
+        "📆 Este mês":      (hoje.replace(day=1), hoje),
+        "🗃️ Tudo":          (date(2000, 1, 1), hoje),
         "✏️ Personalizado": None,
     }
-
-    escolha = st.radio(
-        "Período:", list(opcoes.keys()),
-        horizontal=True, key=f"radio_{chave}"
-    )
-
+    escolha = st.radio("Período:", list(opcoes.keys()), horizontal=True, key=f"radio_{chave}")
     if opcoes[escolha] is not None:
         return opcoes[escolha]
-    else:
-        col1, col2 = st.columns(2)
-        with col1:
-            inicio = st.date_input("De:", value=hoje.replace(day=1), key=f"di_{chave}")
-        with col2:
-            fim = st.date_input("Até:", value=hoje, key=f"df_{chave}")
-        return inicio, fim
+    col1, col2 = st.columns(2)
+    with col1:
+        inicio = st.date_input("De:", value=hoje.replace(day=1), key=f"di_{chave}")
+    with col2:
+        fim = st.date_input("Até:", value=hoje, key=f"df_{chave}")
+    return inicio, fim
+
+# =============================================================================
+# HELPER: EXTRAI NÚMERO DE UNIDADES DO CAMPO "tamanho"
+# =============================================================================
+def unidades_do_kit(tamanho: str) -> str:
+    m = re.search(r"(\d+)\s*un", tamanho or "", re.IGNORECASE)
+    return f"{m.group(1)} pães" if m else tamanho
 
 # =============================================================================
 # INTERFACE PRINCIPAL
@@ -184,39 +163,56 @@ with aba_vendas:
     if not produtos:
         st.warning("Nenhum produto cadastrado. Configure o banco de dados primeiro.")
     else:
-        # Monta opções: "Nome - R$ Preço"
+        # Separa avulsa dos kits
+        avulsa = next((p for p in produtos if "Avulsa" in p["nome"]), None)
+        kits   = [p for p in produtos if "Avulsa" not in p["nome"]]
+
+        # Label: "Nome (10 pães) — R$ 32,00"
         opcoes = {
-            f"{p['nome']}  —  R$ {p['preco_venda']:.2f}": p
-            for p in produtos
+            f"{p['nome']}  ({unidades_do_kit(p['tamanho'])})  —  R$ {p['preco_venda']:.2f}": p
+            for p in kits
         }
 
-        with st.form("form_venda", clear_on_submit=True):
-            produto_sel = st.selectbox("Produto:", list(opcoes.keys()))
-            quantidade  = st.number_input("Quantidade:", min_value=1, value=1, step=1)
+        # Sem st.form → total atualiza em tempo real a cada interação
+        produto_sel = st.selectbox("Produto (kit):", list(opcoes.keys()))
+        produto     = opcoes[produto_sel]
+        qtd_kits    = st.number_input("Quantidade de kits:", min_value=1, value=1, step=1)
 
-            produto     = opcoes[produto_sel]
-            valor_total = produto["preco_venda"] * quantidade
+        st.markdown("**Unidades avulsas extras** *(para completar pedidos quebrados)*")
+        label_avulsa = (
+            f"Unidades avulsas — R$ {avulsa['preco_venda']:.2f} cada:"
+            if avulsa else "Unidades avulsas:"
+        )
+        qtd_avulsa = st.number_input(label_avulsa, min_value=0, value=0, step=1)
 
-            st.markdown(f"### 💵 Total: R$ {valor_total:.2f}")
-            salvar = st.form_submit_button("✅ Registrar Venda", use_container_width=True)
+        # Cálculo em tempo real
+        valor_kits   = produto["preco_venda"] * qtd_kits
+        valor_avulsa = (avulsa["preco_venda"] * qtd_avulsa) if (avulsa and qtd_avulsa > 0) else 0
+        valor_total  = valor_kits + valor_avulsa
 
-            if salvar:
-                salvar_venda(produto["id"], quantidade, valor_total)
-                st.success(f"Venda registrada! **R$ {valor_total:.2f}**")
-                st.balloons()
+        st.markdown(f"### 💵 Total: R$ {valor_total:.2f}")
+        if qtd_avulsa > 0 and avulsa:
+            st.caption(
+                f"Kits: R$ {valor_kits:.2f}  +  "
+                f"{qtd_avulsa} avulsa(s): R$ {valor_avulsa:.2f}"
+            )
+
+        if st.button("✅ Registrar Venda", use_container_width=True):
+            salvar_venda(produto["id"], qtd_kits, valor_kits)
+            if qtd_avulsa > 0 and avulsa:
+                salvar_venda(avulsa["id"], qtd_avulsa, valor_avulsa)
+            st.success(f"Venda registrada! **R$ {valor_total:.2f}**")
+            st.balloons()
 
 # ── ABA 2: DASHBOARD ─────────────────────────────────────────────────────────
 with aba_dashboard:
     st.subheader("Resumo Financeiro")
-
     data_ini, data_fim = seletor_periodo("dash")
-
     faturamento, custo, lucro = buscar_metricas(data_ini, data_fim)
     margem = (lucro / faturamento * 100) if faturamento > 0 else 0
 
     col1, col2 = st.columns(2)
     col3, col4 = st.columns(2)
-
     col1.metric("💰 Faturamento",  f"R$ {faturamento:,.2f}")
     col2.metric("🧾 Custos (CMV)", f"R$ {custo:,.2f}")
     col3.metric("📈 Lucro Bruto",  f"R$ {lucro:,.2f}")
@@ -228,7 +224,6 @@ with aba_dashboard:
 # ── ABA 3: HISTÓRICO ─────────────────────────────────────────────────────────
 with aba_historico:
     st.subheader("Histórico de Vendas")
-
     data_ini, data_fim = seletor_periodo("hist")
     df = buscar_historico(data_ini, data_fim)
 
@@ -250,7 +245,7 @@ with aba_historico:
 # ── ABA 4: GERENCIAR PRODUTOS ────────────────────────────────────────────────
 with aba_gerenciar:
     st.subheader("Cardápio e Custos")
-    st.info("Aqui você pode consultar e atualizar os valores de cada produto.")
+    st.info("Consulte a tabela e use o formulário para atualizar os valores.")
 
     produtos = buscar_produtos()
     if produtos:
@@ -260,14 +255,12 @@ with aba_gerenciar:
 
         st.divider()
         st.markdown("**Editar produto:**")
-
         opcoes_edit = {f"{p['nome']} ({p['tamanho']})": p for p in produtos}
 
         with st.form("form_editar"):
-            prod_edit   = st.selectbox("Selecione:", list(opcoes_edit.keys()))
-            prod        = opcoes_edit[prod_edit]
-
-            colA, colB  = st.columns(2)
+            prod_edit  = st.selectbox("Selecione:", list(opcoes_edit.keys()))
+            prod       = opcoes_edit[prod_edit]
+            colA, colB = st.columns(2)
             with colA:
                 novo_preco = st.number_input(
                     "Novo Preço (R$):", min_value=0.0,
@@ -278,7 +271,6 @@ with aba_gerenciar:
                     "Novo Custo (R$):", min_value=0.0,
                     value=float(prod["custo_estimado"]), format="%.2f"
                 )
-
             salvar_edit = st.form_submit_button("💾 Salvar", use_container_width=True)
             if salvar_edit:
                 atualizar_produto(prod["id"], novo_preco, novo_custo)
