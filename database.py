@@ -11,7 +11,7 @@ def get_supabase() -> Client:
     return create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
 
 
-# ── Produtos ─────────────────────────────────────────────────────────────────
+# ── Produtos ──────────────────────────────────────────────────────────────────
 @st.cache_data(ttl=300)
 def buscar_produtos() -> list[dict]:
     return get_supabase().table("produtos").select("*").order("id").execute().data
@@ -25,12 +25,18 @@ def atualizar_produto(id_produto: int, novo_preco: float, novo_custo: float) -> 
 
 
 # ── Vendas ────────────────────────────────────────────────────────────────────
-def salvar_venda(produto_id: int, quantidade: int, valor_total: float) -> None:
+def salvar_venda(
+    produto_id: int,
+    quantidade: int,
+    valor_total: float,
+    tipo: str = "kit",          # "kit" ou "avulsa"
+) -> None:
     get_supabase().table("vendas").insert({
-        "data_venda": datetime.now().isoformat(),
-        "produto_id": produto_id,
-        "quantidade": quantidade,
+        "data_venda":  datetime.now().isoformat(),
+        "produto_id":  produto_id,
+        "quantidade":  quantidade,
         "valor_total": valor_total,
+        "tipo":        tipo,
     }).execute()
 
 
@@ -71,7 +77,7 @@ def buscar_historico(data_inicio: date, data_fim: date) -> pd.DataFrame:
 
     res = (
         get_supabase().table("vendas")
-        .select("id, data_venda, quantidade, valor_total, produto_id, produtos(nome, preco_venda)")
+        .select("id, data_venda, quantidade, valor_total, tipo, produto_id, produtos(nome, preco_venda)")
         .gte("data_venda", inicio_str)
         .lte("data_venda", fim_str)
         .order("id", desc=True)
@@ -80,14 +86,18 @@ def buscar_historico(data_inicio: date, data_fim: date) -> pd.DataFrame:
 
     rows = []
     for v in res.data:
+        tipo      = v.get("tipo", "kit")
+        nome_prod = v["produtos"]["nome"] if v["produtos"] else "—"
+
         rows.append({
-            "ID":           v["id"],
-            "Data":         v["data_venda"][:16].replace("T", " "),
-            "Produto":      v["produtos"]["nome"] if v["produtos"] else "—",
-            "Qtd":          v["quantidade"],
-            "Total (R$)":   f"R$ {v['valor_total']:.2f}",
-            # Colunas ocultas usadas no formulário de edição
-            "_produto_id":  v["produto_id"],
-            "_preco_unit":  v["produtos"]["preco_venda"] if v["produtos"] else 0,
+            "ID":          v["id"],
+            "Data":        v["data_venda"][:16].replace("T", " "),
+            "Tipo":        "🧺 Kit" if tipo == "kit" else "🍞 Avulsa",
+            "Produto":     nome_prod,
+            "Qtd":         v["quantidade"],
+            "Total (R$)":  f"R$ {v['valor_total']:.2f}",
+            # Ocultas — usadas no formulário de edição
+            "_produto_id": v["produto_id"],
+            "_preco_unit": v["produtos"]["preco_venda"] if v["produtos"] else 0,
         })
     return pd.DataFrame(rows)

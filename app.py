@@ -5,10 +5,10 @@ import pandas as pd
 import streamlit as st
 
 from database import (
+    atualizar_produto,
     buscar_historico,
     buscar_metricas,
     buscar_produtos,
-    atualizar_produto,
     editar_venda,
     excluir_venda,
     salvar_venda,
@@ -26,15 +26,17 @@ st.set_page_config(
 
 st.markdown("""
 <style>
-    .stButton > button          { height: 3rem; font-size: 1rem; font-weight: 600; }
+    .stButton > button {
+        height: 3rem;
+        font-size: 1rem;
+        font-weight: 600;
+    }
     [data-testid="metric-container"] {
         background-color: #f9f9f9;
         border-radius: 12px;
         padding: 12px;
         border: 1px solid #eee;
     }
-    /* Remove foco automático que abre teclado no Android */
-    [data-baseweb="select"] input { display: none !important; }
     #MainMenu { visibility: hidden; }
     footer    { visibility: hidden; }
 </style>
@@ -45,13 +47,11 @@ st.markdown("""
 # HELPERS
 # =============================================================================
 def qtd_do_kit(tamanho: str) -> int:
-    """Extrai o número de unidades de um campo 'tamanho'. Ex: '10 un' → 10."""
     m = re.search(r"(\d+)\s*un", tamanho or "", re.IGNORECASE)
     return int(m.group(1)) if m else 1
 
 
 def label_kit(p: dict) -> str:
-    """Monta o label do selectbox/radio: 'Nome (10 pães) — R$ 32,00'"""
     return f"{p['nome']}  ({qtd_do_kit(p['tamanho'])} pães)  —  R$ {p['preco_venda']:.2f}"
 
 
@@ -94,7 +94,7 @@ with aba_vendas:
     else:
         kits = [p for p in produtos if "Avulsa" not in p["nome"]]
 
-        # ── Seleção de kit via radio (sem teclado no Android) ──
+        # Radio sem teclado no Android
         labels_kit = [label_kit(p) for p in kits]
         idx = st.radio(
             "Escolha o kit:",
@@ -105,28 +105,24 @@ with aba_vendas:
         produto  = kits[idx]
         qtd_kits = st.number_input("Quantidade de kits:", min_value=1, value=1, step=1)
 
-        # ── Unidades avulsas: todas as opções com preço calculado ──
+        # ── Avulsas ──
         st.markdown("---")
         st.markdown("**Unidades avulsas extras** *(para completar pedidos quebrados)*")
 
-        # Monta lista de avulsas com preço = preco_venda / qtd_do_kit
         avulsas = []
         for p in kits:
-            qtd = qtd_do_kit(p["tamanho"])
-            preco_unit = round(p["preco_venda"] / qtd, 2)
-            # Simplifica o nome: retira "Tradicional"/"Baby" para label mais curto
-            nome_curto = p["nome"].replace(" Tradicional", " Trad.").replace(" Traditional", " Trad.")
+            qtd       = qtd_do_kit(p["tamanho"])
+            preco_uni = round(p["preco_venda"] / qtd, 2)
             avulsas.append({
-                "label":      f"{nome_curto}  —  R$ {preco_unit:.2f}/un",
-                "preco_unit": preco_unit,
+                "label":      f"{p['nome']}  —  R$ {preco_uni:.2f}/un",
+                "preco_unit": preco_uni,
                 "nome":       p["nome"],
-                "kit_id":     p["id"],   # referenciamos o produto-pai
+                "kit_id":     p["id"],
             })
 
-        # Mostra selectbox só se o usuário quiser avulsas
         adicionar_avulsa = st.checkbox("Adicionar unidades avulsas?")
-        qtd_avulsa   = 0
-        avulsa_sel   = None
+        qtd_avulsa = 0
+        avulsa_sel = None
 
         if adicionar_avulsa:
             labels_av = [a["label"] for a in avulsas]
@@ -139,23 +135,22 @@ with aba_vendas:
             avulsa_sel = avulsas[idx_av]
             qtd_avulsa = st.number_input("Quantas unidades avulsas?", min_value=1, value=1, step=1)
 
-        # ── Total em tempo real ──
+        # Total em tempo real
         valor_kits   = produto["preco_venda"] * qtd_kits
         valor_avulsa = (avulsa_sel["preco_unit"] * qtd_avulsa) if avulsa_sel else 0
         valor_total  = valor_kits + valor_avulsa
 
         st.markdown(f"### 💵 Total: R$ {valor_total:.2f}")
-        if valor_avulsa > 0:
+        if valor_avulsa > 0 and avulsa_sel:
             st.caption(
                 f"Kits: R$ {valor_kits:.2f}  +  "
                 f"{qtd_avulsa} avulsa(s) {avulsa_sel['nome']}: R$ {valor_avulsa:.2f}"
             )
 
         if st.button("✅ Registrar Venda", use_container_width=True):
-            salvar_venda(produto["id"], qtd_kits, valor_kits)
+            salvar_venda(produto["id"], qtd_kits, valor_kits, tipo="kit")
             if avulsa_sel and qtd_avulsa > 0:
-                # Registra a avulsa referenciando o produto-kit correspondente
-                salvar_venda(avulsa_sel["kit_id"], qtd_avulsa, valor_avulsa)
+                salvar_venda(avulsa_sel["kit_id"], qtd_avulsa, valor_avulsa, tipo="avulsa")
             st.success(f"Venda registrada! **R$ {valor_total:.2f}**")
             st.balloons()
 
@@ -187,34 +182,27 @@ with aba_historico:
     if df.empty:
         st.info("Nenhuma venda no período selecionado.")
     else:
-        # Exibe só as colunas visíveis
-        colunas_visiveis = ["ID", "Data", "Produto", "Qtd", "Total (R$)"]
+        colunas_visiveis = ["ID", "Data", "Tipo", "Produto", "Qtd", "Total (R$)"]
         st.dataframe(df[colunas_visiveis], hide_index=True, use_container_width=True)
         st.caption(f"{len(df)} venda(s) encontrada(s).")
 
         st.divider()
 
-        # ── Editar venda ──
         with st.expander("✏️ Editar uma venda"):
             with st.form("form_editar_venda"):
                 id_editar = st.number_input("ID da venda:", min_value=1, step=1, key="id_ed")
-
-                # Busca os dados da venda selecionada para pré-preencher
-                linha = df[df["ID"] == id_editar]
+                linha     = df[df["ID"] == id_editar]
                 preco_unit_atual = float(linha["_preco_unit"].values[0]) if not linha.empty else 0.0
                 qtd_atual        = int(linha["Qtd"].values[0])           if not linha.empty else 1
 
-                nova_qtd = st.number_input(
-                    "Nova quantidade:", min_value=1, value=qtd_atual, step=1
-                )
+                nova_qtd   = st.number_input("Nova quantidade:", min_value=1, value=qtd_atual, step=1)
                 novo_total = preco_unit_atual * nova_qtd
-                st.caption(f"Novo total calculado: **R$ {novo_total:.2f}**")
+                st.caption(f"Novo total: **R$ {novo_total:.2f}**")
 
                 if st.form_submit_button("💾 Salvar edição", use_container_width=True):
                     editar_venda(int(id_editar), nova_qtd, novo_total)
                     st.success(f"Venda #{int(id_editar)} atualizada! Atualize a página.")
 
-        # ── Excluir venda ──
         with st.expander("🗑️ Excluir uma venda"):
             with st.form("form_excluir"):
                 id_excluir = st.number_input("ID da venda:", min_value=1, step=1, key="id_ex")
@@ -238,12 +226,22 @@ with aba_gerenciar:
 
         st.divider()
         st.markdown("**Editar produto:**")
-        opcoes_edit = {f"{p['nome']} ({p['tamanho']})": p for p in produtos}
+
+        # Selectbox dentro de form — funciona corretamente no mobile
+        # (o problema anterior era o CSS que ocultava o input nativo)
+        nomes_prod = [f"[{p['id']}] {p['nome']} ({p['tamanho']})" for p in produtos]
 
         with st.form("form_editar_prod"):
-            prod_edit  = st.selectbox("Selecione:", list(opcoes_edit.keys()))
-            prod       = opcoes_edit[prod_edit]
-            cA, cB     = st.columns(2)
+            escolha   = st.selectbox("Selecione o produto:", nomes_prod)
+            idx_prod  = nomes_prod.index(escolha)
+            prod      = produtos[idx_prod]
+
+            st.caption(
+                f"Valores atuais → Preço: R$ {prod['preco_venda']:.2f}  |  "
+                f"Custo: R$ {prod['custo_estimado']:.2f}"
+            )
+
+            cA, cB = st.columns(2)
             with cA:
                 novo_preco = st.number_input(
                     "Novo Preço (R$):", min_value=0.0,
@@ -254,6 +252,7 @@ with aba_gerenciar:
                     "Novo Custo (R$):", min_value=0.0,
                     value=float(prod["custo_estimado"]), format="%.2f"
                 )
-            if st.form_submit_button("💾 Salvar", use_container_width=True):
+
+            if st.form_submit_button("💾 Salvar alterações", use_container_width=True):
                 atualizar_produto(prod["id"], novo_preco, novo_custo)
-                st.success("Produto atualizado! Atualize a página para ver.")
+                st.success(f"✅ '{prod['nome']}' atualizado! Atualize a página para ver.")
