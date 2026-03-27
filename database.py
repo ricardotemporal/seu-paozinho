@@ -92,15 +92,20 @@ def buscar_historico(data_inicio: date, data_fim: date) -> pd.DataFrame:
         tipo      = v.get("tipo", "kit")
         nome_prod = v["produtos"]["nome"] if v["produtos"] else "—"
 
+        # Preço unitário real = total pago ÷ quantidade registrada
+        # Funciona corretamente tanto para kits quanto para avulsas
+        qtd         = v["quantidade"] or 1
+        preco_unit  = round(v["valor_total"] / qtd, 4)
+
         rows.append({
             "ID":          v["id"],
             "Data":        v["data_venda"][:16].replace("T", " "),
             "Tipo":        "🧺 Kit" if tipo == "kit" else "🍞 Avulsa",
             "Produto":     nome_prod,
-            "Qtd":         v["quantidade"],
+            "Qtd":         qtd,
             "Total (R$)":  f"R$ {v['valor_total']:.2f}",
             # Ocultas — usadas no formulário de edição
             "_produto_id": v["produto_id"],
-            "_preco_unit": v["produtos"]["preco_venda"] if v["produtos"] else 0,
+            "_preco_unit": preco_unit,
         })
     return pd.DataFrame(rows)
