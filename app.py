@@ -94,21 +94,7 @@ with aba_vendas:
     else:
         kits = [p for p in produtos if "Avulsa" not in p["nome"]]
 
-        # Radio sem teclado no Android
-        labels_kit = [label_kit(p) for p in kits]
-        idx = st.radio(
-            "Escolha o kit:",
-            range(len(labels_kit)),
-            format_func=lambda i: labels_kit[i],
-            key="radio_kit",
-        )
-        produto  = kits[idx]
-        qtd_kits = st.number_input("Quantidade de kits:", min_value=1, value=1, step=1)
-
-        # ── Avulsas ──
-        st.markdown("---")
-        st.markdown("**Unidades avulsas extras** *(para completar pedidos quebrados)*")
-
+        # Monta lista de avulsas com preço por unidade
         avulsas = []
         for p in kits:
             qtd       = qtd_do_kit(p["tamanho"])
@@ -120,9 +106,30 @@ with aba_vendas:
                 "kit_id":     p["id"],
             })
 
+        # ── Kits (opcional) ──
+        adicionar_kit = st.checkbox("Adicionar kit(s)?", value=True)
+        produto   = None
+        qtd_kits  = 0
+        valor_kits = 0.0
+
+        if adicionar_kit:
+            labels_kit = [label_kit(p) for p in kits]
+            idx = st.radio(
+                "Escolha o kit:",
+                range(len(labels_kit)),
+                format_func=lambda i: labels_kit[i],
+                key="radio_kit",
+            )
+            produto  = kits[idx]
+            qtd_kits = st.number_input("Quantidade de kits:", min_value=1, value=1, step=1)
+            valor_kits = produto["preco_venda"] * qtd_kits
+
+        # ── Avulsas (opcional) ──
+        st.markdown("---")
         adicionar_avulsa = st.checkbox("Adicionar unidades avulsas?")
-        qtd_avulsa = 0
-        avulsa_sel = None
+        qtd_avulsa  = 0
+        avulsa_sel  = None
+        valor_avulsa = 0.0
 
         if adicionar_avulsa:
             labels_av = [a["label"] for a in avulsas]
@@ -134,22 +141,29 @@ with aba_vendas:
             )
             avulsa_sel = avulsas[idx_av]
             qtd_avulsa = st.number_input("Quantas unidades avulsas?", min_value=1, value=1, step=1)
+            valor_avulsa = avulsa_sel["preco_unit"] * qtd_avulsa
 
-        # Total em tempo real
-        valor_kits   = produto["preco_venda"] * qtd_kits
-        valor_avulsa = (avulsa_sel["preco_unit"] * qtd_avulsa) if avulsa_sel else 0
-        valor_total  = valor_kits + valor_avulsa
-
+        # ── Total em tempo real ──
+        valor_total = valor_kits + valor_avulsa
         st.markdown(f"### 💵 Total: R$ {valor_total:.2f}")
-        if valor_avulsa > 0 and avulsa_sel:
-            st.caption(
-                f"Kits: R$ {valor_kits:.2f}  +  "
-                f"{qtd_avulsa} avulsa(s) {avulsa_sel['nome']}: R$ {valor_avulsa:.2f}"
-            )
 
-        if st.button("✅ Registrar Venda", use_container_width=True):
-            salvar_venda(produto["id"], qtd_kits, valor_kits, tipo="kit")
-            if avulsa_sel and qtd_avulsa > 0:
+        detalhes = []
+        if valor_kits > 0 and produto:
+            detalhes.append(f"{qtd_kits} kit(s) {produto['nome']}: R$ {valor_kits:.2f}")
+        if valor_avulsa > 0 and avulsa_sel:
+            detalhes.append(f"{qtd_avulsa} avulsa(s) {avulsa_sel['nome']}: R$ {valor_avulsa:.2f}")
+        if len(detalhes) > 1:
+            st.caption("  +  ".join(detalhes))
+
+        # ── Registrar ──
+        sem_item = not adicionar_kit and not adicionar_avulsa
+        if sem_item:
+            st.warning("Selecione ao menos um kit ou uma unidade avulsa.")
+
+        if st.button("✅ Registrar Venda", use_container_width=True, disabled=sem_item):
+            if adicionar_kit and produto and qtd_kits > 0:
+                salvar_venda(produto["id"], qtd_kits, valor_kits, tipo="kit")
+            if adicionar_avulsa and avulsa_sel and qtd_avulsa > 0:
                 salvar_venda(avulsa_sel["kit_id"], qtd_avulsa, valor_avulsa, tipo="avulsa")
             st.success(f"Venda registrada! **R$ {valor_total:.2f}**")
             st.balloons()
