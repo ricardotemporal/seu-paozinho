@@ -1,4 +1,5 @@
 from __future__ import annotations
+import re
 import streamlit as st
 from supabase import create_client, Client
 from datetime import datetime, date
@@ -29,9 +30,9 @@ def salvar_venda(
     produto_id: int,
     quantidade: int,
     valor_total: float,
-    tipo: str = "kit",          # "kit" ou "avulsa"
+    tipo: str = "kit",
 ) -> None:
-    st.cache_data.clear()
+    # FIX: cache limpo APÓS o insert para garantir consistência
     get_supabase().table("vendas").insert({
         "data_venda":  datetime.now().isoformat(),
         "produto_id":  produto_id,
@@ -39,27 +40,29 @@ def salvar_venda(
         "valor_total": valor_total,
         "tipo":        tipo,
     }).execute()
+    st.cache_data.clear()
 
 
 def editar_venda(id_venda: int, nova_quantidade: int, novo_total: float) -> None:
-    st.cache_data.clear()
     get_supabase().table("vendas").update(
         {"quantidade": nova_quantidade, "valor_total": novo_total}
     ).eq("id", id_venda).execute()
+    st.cache_data.clear()
 
 
 def excluir_venda(id_venda: int) -> None:
-    st.cache_data.clear()
     get_supabase().table("vendas").delete().eq("id", id_venda).execute()
+    st.cache_data.clear()
 
 
 def buscar_metricas(data_inicio: date, data_fim: date) -> tuple[float, float, float]:
     inicio_str = datetime.combine(data_inicio, datetime.min.time()).isoformat()
     fim_str    = datetime.combine(data_fim,    datetime.max.time()).isoformat()
 
+    # FIX: busca tipo e tamanho para calcular custo correto de avulsas
     res = (
         get_supabase().table("vendas")
-        .select("valor_total, quantidade, produtos(custo_estimado)")
+        .select("valor_total, quantidade, tipo, produtos(custo_estimado, tamanho)")
         .gte("data_venda", inicio_str)
         .lte("data_venda", fim_str)
         .execute()
@@ -68,8 +71,24 @@ def buscar_metricas(data_inicio: date, data_fim: date) -> tuple[float, float, fl
     faturamento = custo = 0.0
     for v in res.data:
         faturamento += v["valor_total"]
-        custo_unit   = v["produtos"]["custo_estimado"] if v["produtos"] else 0
-        custo       += custo_unit * v["quantidade"]
+        if not v["produtos"]:
+            continue
+
+        custo_prod = v["produtos"]["custo_estimado"]
+        tamanho    = v["produtos"].get("tamanho", "")
+        tipo       = v.get("tipo", "kit")
+
+        # Para avulsas antigas que referenciam um kit (tamanho "Kit 10 un"),
+        # divide o custo do kit pela quantidade de pães para obter custo/unidade.
+        # Para avulsas novas (tamanho "1 unidade"), custo_prod já é por unidade.
+        if tipo == "avulsa" and tamanho != "1 unidade":
+            m = re.search(r"(\d+)", tamanho)
+            kit_size  = int(m.group(1)) if m else 1
+            custo_uni = custo_prod / kit_size
+        else:
+            custo_uni = custo_prod
+
+        custo += custo_uni * v["quantidade"]
 
     return faturamento, custo, faturamento - custo
 
@@ -89,23 +108,20 @@ def buscar_historico(data_inicio: date, data_fim: date) -> pd.DataFrame:
 
     rows = []
     for v in res.data:
-        tipo      = v.get("tipo", "kit")
-        nome_prod = v["produtos"]["nome"] if v["produtos"] else "—"
-
-        # Preço unitário real = total pago ÷ quantidade registrada
-        # Funciona corretamente tanto para kits quanto para avulsas
-        qtd         = v["quantidade"] or 1
-        preco_unit  = round(v["valor_total"] / qtd, 4)
+        tipo     = v.get("tipo", "kit")
+        nome     = v["produtos"]["nome"] if v["produtos"] else "—"
+        qtd      = v["quantidade"] or 1
+        # Preço unitário real = total ÷ quantidade (correto para kits e avulsas)
+        preco_u  = round(v["valor_total"] / qtd, 4)
 
         rows.append({
             "ID":          v["id"],
             "Data":        v["data_venda"][:16].replace("T", " "),
             "Tipo":        "🧺 Kit" if tipo == "kit" else "🍞 Avulsa",
-            "Produto":     nome_prod,
+            "Produto":     nome,
             "Qtd":         qtd,
             "Total (R$)":  f"R$ {v['valor_total']:.2f}",
-            # Ocultas — usadas no formulário de edição
             "_produto_id": v["produto_id"],
-            "_preco_unit": preco_unit,
+            "_preco_unit": preco_u,
         })
     return pd.DataFrame(rows)

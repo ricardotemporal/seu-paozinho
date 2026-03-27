@@ -1,8 +1,7 @@
+import streamlit as st
 import re
 from datetime import date, timedelta
-
 import pandas as pd
-import streamlit as st
 
 from database import (
     atualizar_produto,
@@ -47,6 +46,7 @@ st.markdown("""
 # HELPERS
 # =============================================================================
 def qtd_do_kit(tamanho: str) -> int:
+    """Extrai número de unidades do campo tamanho. Ex: 'Kit 10 un' → 10."""
     m = re.search(r"(\d+)\s*un", tamanho or "", re.IGNORECASE)
     return int(m.group(1)) if m else 1
 
@@ -92,25 +92,15 @@ with aba_vendas:
     if not produtos:
         st.warning("Nenhum produto cadastrado.")
     else:
-        kits = [p for p in produtos if "Avulsa" not in p["nome"]]
+        # Separa kits e avulsas direto do banco
+        kits    = [p for p in produtos if "Avulsa" not in p["nome"]]
+        avulsas = [p for p in produtos if "Avulsa" in p["nome"]]
 
-        # Monta lista de avulsas com preço por unidade
-        avulsas = []
-        for p in kits:
-            qtd       = qtd_do_kit(p["tamanho"])
-            preco_uni = round(p["preco_venda"] / qtd, 2)
-            avulsas.append({
-                "label":      f"{p['nome']}  —  R$ {preco_uni:.2f}/un",
-                "preco_unit": preco_uni,
-                "nome":       p["nome"],
-                "kit_id":     p["id"],
-            })
-
-        # ── Kits (opcional) ──
-        adicionar_kit = st.checkbox("Adicionar kit(s)?", value=True)
-        produto   = None
-        qtd_kits  = 0
-        valor_kits = 0.0
+        # ── Kits (opcional) ──────────────────────────────────────────────────
+        adicionar_kit  = st.checkbox("Adicionar kit(s)?", value=True)
+        produto        = None
+        qtd_kits       = 0
+        valor_kits     = 0.0
 
         if adicionar_kit:
             labels_kit = [label_kit(p) for p in kits]
@@ -120,30 +110,34 @@ with aba_vendas:
                 format_func=lambda i: labels_kit[i],
                 key="radio_kit",
             )
-            produto  = kits[idx]
-            qtd_kits = st.number_input("Quantidade de kits:", min_value=1, value=1, step=1)
+            produto    = kits[idx]
+            qtd_kits   = st.number_input("Quantidade de kits:", min_value=1, value=1, step=1)
             valor_kits = produto["preco_venda"] * qtd_kits
 
-        # ── Avulsas (opcional) ──
+        # ── Avulsas (opcional) ───────────────────────────────────────────────
         st.markdown("---")
         adicionar_avulsa = st.checkbox("Adicionar unidades avulsas?")
-        qtd_avulsa  = 0
-        avulsa_sel  = None
-        valor_avulsa = 0.0
+        avulsa_sel       = None
+        qtd_avulsa       = 0
+        valor_avulsa     = 0.0
 
         if adicionar_avulsa:
-            labels_av = [a["label"] for a in avulsas]
-            idx_av    = st.radio(
+            # Avulsas vêm do banco com preço e custo por unidade já corretos
+            labels_av = [
+                f"{p['nome'].replace('Avulsa - ', '')}  —  R$ {p['preco_venda']:.2f}/un"
+                for p in avulsas
+            ]
+            idx_av = st.radio(
                 "Sabor da avulsa:",
                 range(len(labels_av)),
                 format_func=lambda i: labels_av[i],
                 key="radio_avulsa",
             )
-            avulsa_sel = avulsas[idx_av]
-            qtd_avulsa = st.number_input("Quantas unidades avulsas?", min_value=1, value=1, step=1)
-            valor_avulsa = avulsa_sel["preco_unit"] * qtd_avulsa
+            avulsa_sel   = avulsas[idx_av]
+            qtd_avulsa   = st.number_input("Quantas unidades avulsas?", min_value=1, value=1, step=1)
+            valor_avulsa = avulsa_sel["preco_venda"] * qtd_avulsa
 
-        # ── Total em tempo real ──
+        # ── Total em tempo real ──────────────────────────────────────────────
         valor_total = valor_kits + valor_avulsa
         st.markdown(f"### 💵 Total: R$ {valor_total:.2f}")
 
@@ -151,11 +145,14 @@ with aba_vendas:
         if valor_kits > 0 and produto:
             detalhes.append(f"{qtd_kits} kit(s) {produto['nome']}: R$ {valor_kits:.2f}")
         if valor_avulsa > 0 and avulsa_sel:
-            detalhes.append(f"{qtd_avulsa} avulsa(s) {avulsa_sel['nome']}: R$ {valor_avulsa:.2f}")
+            detalhes.append(
+                f"{qtd_avulsa} avulsa(s) "
+                f"{avulsa_sel['nome'].replace('Avulsa - ', '')}: R$ {valor_avulsa:.2f}"
+            )
         if len(detalhes) > 1:
             st.caption("  +  ".join(detalhes))
 
-        # ── Registrar ──
+        # ── Registrar ────────────────────────────────────────────────────────
         sem_item = not adicionar_kit and not adicionar_avulsa
         if sem_item:
             st.warning("Selecione ao menos um kit ou uma unidade avulsa.")
@@ -164,10 +161,10 @@ with aba_vendas:
             if adicionar_kit and produto and qtd_kits > 0:
                 salvar_venda(produto["id"], qtd_kits, valor_kits, tipo="kit")
             if adicionar_avulsa and avulsa_sel and qtd_avulsa > 0:
-                salvar_venda(avulsa_sel["kit_id"], qtd_avulsa, valor_avulsa, tipo="avulsa")
+                # FIX: usa o ID do produto avulso próprio (não mais o kit_id)
+                salvar_venda(avulsa_sel["id"], qtd_avulsa, valor_avulsa, tipo="avulsa")
             st.success(f"Venda registrada! **R$ {valor_total:.2f}**")
-            st.balloons()
-            st.rerun()
+            st.rerun()  # FIX: removido st.balloons() antes do rerun
 
 
 # ── ABA 2: DASHBOARD ─────────────────────────────────────────────────────────
@@ -235,23 +232,29 @@ with aba_gerenciar:
 
     produtos = buscar_produtos()
     if produtos:
-        df_prod = pd.DataFrame(produtos)[
-            ["id", "nome", "tamanho", "preco_venda", "custo_estimado"]
-        ]
-        df_prod.columns = ["ID", "Produto", "Tamanho", "Preço (R$)", "Custo (R$)"]
-        st.dataframe(df_prod, hide_index=True, use_container_width=True)
+        # Exibe kits e avulsas em seções separadas
+        kits_tab    = [p for p in produtos if "Avulsa" not in p["nome"]]
+        avulsas_tab = [p for p in produtos if "Avulsa" in p["nome"]]
+
+        st.markdown("**🧺 Kits**")
+        df_kits = pd.DataFrame(kits_tab)[["id", "nome", "tamanho", "preco_venda", "custo_estimado"]]
+        df_kits.columns = ["ID", "Produto", "Tamanho", "Preço (R$)", "Custo (R$)"]
+        st.dataframe(df_kits, hide_index=True, use_container_width=True)
+
+        st.markdown("**🍞 Avulsas**")
+        df_avulsas = pd.DataFrame(avulsas_tab)[["id", "nome", "preco_venda", "custo_estimado"]]
+        df_avulsas.columns = ["ID", "Produto", "Preço/un (R$)", "Custo/un (R$)"]
+        st.dataframe(df_avulsas, hide_index=True, use_container_width=True)
 
         st.divider()
         st.markdown("**Editar produto:**")
 
-        # Selectbox dentro de form — funciona corretamente no mobile
-        # (o problema anterior era o CSS que ocultava o input nativo)
         nomes_prod = [f"[{p['id']}] {p['nome']} ({p['tamanho']})" for p in produtos]
 
         with st.form("form_editar_prod"):
-            escolha   = st.selectbox("Selecione o produto:", nomes_prod)
-            idx_prod  = nomes_prod.index(escolha)
-            prod      = produtos[idx_prod]
+            escolha  = st.selectbox("Selecione o produto:", nomes_prod)
+            idx_prod = nomes_prod.index(escolha)
+            prod     = produtos[idx_prod]
 
             st.caption(
                 f"Valores atuais → Preço: R$ {prod['preco_venda']:.2f}  |  "
