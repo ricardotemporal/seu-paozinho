@@ -167,6 +167,7 @@ with aba_vendas:
                 salvar_venda(avulsa_sel["kit_id"], qtd_avulsa, valor_avulsa, tipo="avulsa")
             st.success(f"Venda registrada! **R$ {valor_total:.2f}**")
             st.balloons()
+            st.rerun()
 
 
 # ── ABA 2: DASHBOARD ─────────────────────────────────────────────────────────
@@ -215,14 +216,16 @@ with aba_historico:
 
                 if st.form_submit_button("💾 Salvar edição", use_container_width=True):
                     editar_venda(int(id_editar), nova_qtd, novo_total)
-                    st.success(f"Venda #{int(id_editar)} atualizada! Atualize a página.")
+                    st.success(f"Venda #{int(id_editar)} atualizada!")
+                    st.rerun()
 
         with st.expander("🗑️ Excluir uma venda"):
             with st.form("form_excluir"):
                 id_excluir = st.number_input("ID da venda:", min_value=1, step=1, key="id_ex")
                 if st.form_submit_button("🗑️ Excluir", use_container_width=True):
                     excluir_venda(int(id_excluir))
-                    st.success(f"Venda #{int(id_excluir)} excluída. Atualize a página.")
+                    st.success(f"Venda #{int(id_excluir)} excluída!")
+                    st.rerun()
 
 
 # ── ABA 4: GERENCIAR PRODUTOS ────────────────────────────────────────────────
@@ -269,4 +272,5 @@ with aba_gerenciar:
 
             if st.form_submit_button("💾 Salvar alterações", use_container_width=True):
                 atualizar_produto(prod["id"], novo_preco, novo_custo)
-                st.success(f"✅ '{prod['nome']}' atualizado! Atualize a página para ver.")
+                st.success(f"✅ '{prod['nome']}' atualizado!")
+                st.rerun()

@@ -31,6 +31,7 @@ def salvar_venda(
     valor_total: float,
     tipo: str = "kit",          # "kit" ou "avulsa"
 ) -> None:
+    st.cache_data.clear()
     get_supabase().table("vendas").insert({
         "data_venda":  datetime.now().isoformat(),
         "produto_id":  produto_id,
@@ -41,12 +42,14 @@ def salvar_venda(
 
 
 def editar_venda(id_venda: int, nova_quantidade: int, novo_total: float) -> None:
+    st.cache_data.clear()
     get_supabase().table("vendas").update(
         {"quantidade": nova_quantidade, "valor_total": novo_total}
     ).eq("id", id_venda).execute()
 
 
 def excluir_venda(id_venda: int) -> None:
+    st.cache_data.clear()
     get_supabase().table("vendas").delete().eq("id", id_venda).execute()
 
 
