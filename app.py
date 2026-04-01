@@ -133,7 +133,12 @@ with aba_vendas:
     if not produtos:
         st.warning("Nenhum produto cadastrado.")
     else:
-        kits    = [p for p in produtos if "Avulsa" not in p["nome"]]
+        # Ordena: todos os Tradicionais primeiro, depois todos os Baby
+        kits_raw = [p for p in produtos if "Avulsa" not in p["nome"]]
+        kits     = (
+            [p for p in kits_raw if "Baby" not in p["nome"]] +
+            [p for p in kits_raw if "Baby"     in p["nome"]]
+        )
         avulsas = [p for p in produtos if "Avulsa" in p["nome"]]
 
         # Legenda de cores
