@@ -31,14 +31,17 @@ def salvar_venda(
     quantidade: int,
     valor_total: float,
     tipo: str = "kit",
+    frete_cobrado: float = 0.0,
+    frete_real: float = 0.0,
 ) -> None:
-    # FIX: cache limpo APÓS o insert para garantir consistência
     get_supabase().table("vendas").insert({
-        "data_venda":  datetime.now().isoformat(),
-        "produto_id":  produto_id,
-        "quantidade":  quantidade,
-        "valor_total": valor_total,
-        "tipo":        tipo,
+        "data_venda":    datetime.now().isoformat(),
+        "produto_id":    produto_id,
+        "quantidade":    quantidade,
+        "valor_total":   valor_total,
+        "tipo":          tipo,
+        "frete_cobrado": frete_cobrado,
+        "frete_real":    frete_real,
     }).execute()
     st.cache_data.clear()
 
@@ -55,22 +58,33 @@ def excluir_venda(id_venda: int) -> None:
     st.cache_data.clear()
 
 
-def buscar_metricas(data_inicio: date, data_fim: date) -> tuple[float, float, float]:
+def buscar_metricas(data_inicio: date, data_fim: date) -> dict:
+    """
+    Retorna dicionário com:
+      faturamento  — soma dos valor_total + frete_cobrado
+      custo        — CMV dos produtos + frete_real pago
+      lucro        — faturamento - custo
+      lucro_frete  — frete_cobrado - frete_real (lucro só do frete)
+    """
     inicio_str = datetime.combine(data_inicio, datetime.min.time()).isoformat()
     fim_str    = datetime.combine(data_fim,    datetime.max.time()).isoformat()
 
-    # FIX: busca tipo e tamanho para calcular custo correto de avulsas
     res = (
         get_supabase().table("vendas")
-        .select("valor_total, quantidade, tipo, produtos(custo_estimado, tamanho)")
+        .select("valor_total, quantidade, tipo, frete_cobrado, frete_real, produtos(custo_estimado, tamanho)")
         .gte("data_venda", inicio_str)
         .lte("data_venda", fim_str)
         .execute()
     )
 
-    faturamento = custo = 0.0
+    faturamento = custo = lucro_frete = 0.0
+
     for v in res.data:
-        faturamento += v["valor_total"]
+        fc = v.get("frete_cobrado") or 0
+        fr = v.get("frete_real")    or 0
+        faturamento  += v["valor_total"] + fc
+        lucro_frete  += fc - fr
+
         if not v["produtos"]:
             continue
 
@@ -78,9 +92,7 @@ def buscar_metricas(data_inicio: date, data_fim: date) -> tuple[float, float, fl
         tamanho    = v["produtos"].get("tamanho", "")
         tipo       = v.get("tipo", "kit")
 
-        # Para avulsas antigas que referenciam um kit (tamanho "Kit 10 un"),
-        # divide o custo do kit pela quantidade de pães para obter custo/unidade.
-        # Para avulsas novas (tamanho "1 unidade"), custo_prod já é por unidade.
+        # Avulsas antigas referenciavam o kit — divide pelo tamanho
         if tipo == "avulsa" and tamanho != "1 unidade":
             m = re.search(r"(\d+)", tamanho)
             kit_size  = int(m.group(1)) if m else 1
@@ -88,9 +100,14 @@ def buscar_metricas(data_inicio: date, data_fim: date) -> tuple[float, float, fl
         else:
             custo_uni = custo_prod
 
-        custo += custo_uni * v["quantidade"]
+        custo += custo_uni * v["quantidade"] + fr
 
-    return faturamento, custo, faturamento - custo
+    return {
+        "faturamento": faturamento,
+        "custo":       custo,
+        "lucro":       faturamento - custo,
+        "lucro_frete": lucro_frete,
+    }
 
 
 def buscar_historico(data_inicio: date, data_fim: date) -> pd.DataFrame:
@@ -99,7 +116,7 @@ def buscar_historico(data_inicio: date, data_fim: date) -> pd.DataFrame:
 
     res = (
         get_supabase().table("vendas")
-        .select("id, data_venda, quantidade, valor_total, tipo, produto_id, produtos(nome, preco_venda)")
+        .select("id, data_venda, quantidade, valor_total, tipo, frete_cobrado, frete_real, produto_id, produtos(nome, preco_venda)")
         .gte("data_venda", inicio_str)
         .lte("data_venda", fim_str)
         .order("id", desc=True)
@@ -108,20 +125,23 @@ def buscar_historico(data_inicio: date, data_fim: date) -> pd.DataFrame:
 
     rows = []
     for v in res.data:
-        tipo     = v.get("tipo", "kit")
-        nome     = v["produtos"]["nome"] if v["produtos"] else "—"
-        qtd      = v["quantidade"] or 1
-        # Preço unitário real = total ÷ quantidade (correto para kits e avulsas)
-        preco_u  = round(v["valor_total"] / qtd, 4)
+        tipo  = v.get("tipo", "kit")
+        nome  = v["produtos"]["nome"] if v["produtos"] else "—"
+        qtd   = v["quantidade"] or 1
+        fc    = v.get("frete_cobrado") or 0
+        fr    = v.get("frete_real")    or 0
+
+        frete_label = f"R$ {fc:.2f} (pago R$ {fr:.2f})" if fc > 0 else "—"
 
         rows.append({
-            "ID":          v["id"],
-            "Data":        v["data_venda"][:16].replace("T", " "),
-            "Tipo":        "🧺 Kit" if tipo == "kit" else "🍞 Avulsa",
-            "Produto":     nome,
-            "Qtd":         qtd,
-            "Total (R$)":  f"R$ {v['valor_total']:.2f}",
-            "_produto_id": v["produto_id"],
-            "_preco_unit": preco_u,
+            "ID":           v["id"],
+            "Data":         v["data_venda"][:16].replace("T", " "),
+            "Tipo":         "🧺 Kit" if tipo == "kit" else "🍞 Avulsa",
+            "Produto":      nome,
+            "Qtd":          qtd,
+            "Produtos (R$)":f"R$ {v['valor_total']:.2f}",
+            "Frete":        frete_label,
+            "_preco_unit":  round(v["valor_total"] / qtd, 4),
+            "_produto_id":  v["produto_id"],
         })
     return pd.DataFrame(rows)

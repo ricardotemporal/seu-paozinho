@@ -46,13 +46,54 @@ st.markdown("""
 # HELPERS
 # =============================================================================
 def qtd_do_kit(tamanho: str) -> int:
-    """Extrai número de unidades do campo tamanho. Ex: 'Kit 10 un' → 10."""
     m = re.search(r"(\d+)\s*un", tamanho or "", re.IGNORECASE)
     return int(m.group(1)) if m else 1
 
 
 def label_kit(p: dict) -> str:
-    return f"{p['nome']}  ({qtd_do_kit(p['tamanho'])} pães)  —  R$ {p['preco_venda']:.2f}"
+    """
+    Monta label do kit com destaque visual para Baby e Tradicional.
+    Usa prefixo colorido via emoji para diferenciar no mobile.
+    """
+    nome   = p["nome"]
+    qtd    = qtd_do_kit(p["tamanho"])
+    preco  = p["preco_venda"]
+
+    if "Baby" in nome:
+        prefixo = "🟠 BABY     "
+    elif "Tradicional" in nome or "Trad." in nome:
+        prefixo = "🔵 TRAD.   "
+    else:
+        prefixo = "⚪ "
+
+    # Remove a palavra do nome para não repetir — já está no prefixo
+    nome_curto = (
+        nome.replace(" Tradicional", "")
+            .replace(" Baby", "")
+            .replace(" Trad.", "")
+    )
+    return f"{prefixo} {nome_curto}  ({qtd} pães)  R$ {preco:.2f}"
+
+
+def label_avulsa(p: dict) -> str:
+    """Label da avulsa com destaque Baby/Tradicional."""
+    nome  = p["nome"]
+    preco = p["preco_venda"]
+
+    if "Baby" in nome:
+        prefixo = "🟠 BABY     "
+    elif "Trad." in nome or "Tradicional" in nome:
+        prefixo = "🔵 TRAD.   "
+    else:
+        prefixo = "⚪ "
+
+    nome_curto = (
+        nome.replace("Avulsa - ", "")
+            .replace(" Tradicional", "")
+            .replace(" Baby", "")
+            .replace(" Trad.", "")
+    )
+    return f"{prefixo} {nome_curto}  R$ {preco:.2f}/un"
 
 
 def seletor_periodo(chave: str) -> tuple[date, date]:
@@ -92,22 +133,24 @@ with aba_vendas:
     if not produtos:
         st.warning("Nenhum produto cadastrado.")
     else:
-        # Separa kits e avulsas direto do banco
         kits    = [p for p in produtos if "Avulsa" not in p["nome"]]
         avulsas = [p for p in produtos if "Avulsa" in p["nome"]]
 
+        # Legenda de cores
+        st.caption("🔵 TRAD. = Tradicional (10 pães)   |   🟠 BABY = Baby (20 pães)")
+        st.divider()
+
         # ── Kits (opcional) ──────────────────────────────────────────────────
-        adicionar_kit  = st.checkbox("Adicionar kit(s)?", value=True)
-        produto        = None
-        qtd_kits       = 0
-        valor_kits     = 0.0
+        adicionar_kit = st.checkbox("Adicionar kit(s)?", value=True)
+        produto       = None
+        qtd_kits      = 0
+        valor_kits    = 0.0
 
         if adicionar_kit:
-            labels_kit = [label_kit(p) for p in kits]
             idx = st.radio(
                 "Escolha o kit:",
-                range(len(labels_kit)),
-                format_func=lambda i: labels_kit[i],
+                range(len(kits)),
+                format_func=lambda i: label_kit(kits[i]),
                 key="radio_kit",
             )
             produto    = kits[idx]
@@ -122,24 +165,46 @@ with aba_vendas:
         valor_avulsa     = 0.0
 
         if adicionar_avulsa:
-            # Avulsas vêm do banco com preço e custo por unidade já corretos
-            labels_av = [
-                f"{p['nome'].replace('Avulsa - ', '')}  —  R$ {p['preco_venda']:.2f}/un"
-                for p in avulsas
-            ]
             idx_av = st.radio(
                 "Sabor da avulsa:",
-                range(len(labels_av)),
-                format_func=lambda i: labels_av[i],
+                range(len(avulsas)),
+                format_func=lambda i: label_avulsa(avulsas[i]),
                 key="radio_avulsa",
             )
             avulsa_sel   = avulsas[idx_av]
             qtd_avulsa   = st.number_input("Quantas unidades avulsas?", min_value=1, value=1, step=1)
             valor_avulsa = avulsa_sel["preco_venda"] * qtd_avulsa
 
+        # ── Frete (opcional) ─────────────────────────────────────────────────
+        st.markdown("---")
+        tem_frete = st.checkbox("Tem entrega com frete?")
+        frete_cobrado = 0.0
+        frete_real    = 0.0
+
+        if tem_frete:
+            st.caption("Informe o que você cobrou e o que pagou no app de entrega.")
+            cf1, cf2 = st.columns(2)
+            with cf1:
+                frete_cobrado = st.number_input(
+                    "💰 Cobrado do cliente (R$):",
+                    min_value=0.0, value=10.0, step=0.50, format="%.2f"
+                )
+            with cf2:
+                frete_real = st.number_input(
+                    "📱 Pago no app (R$):",
+                    min_value=0.0, value=0.0, step=0.50, format="%.2f"
+                )
+            lucro_frete_now = frete_cobrado - frete_real
+            if lucro_frete_now > 0:
+                st.caption(f"✅ Você ganha **R$ {lucro_frete_now:.2f}** com o frete.")
+            elif lucro_frete_now < 0:
+                st.warning(f"⚠️ Você está pagando R$ {abs(lucro_frete_now):.2f} a mais do que cobra!")
+            else:
+                st.caption("Frete empatado — sem lucro nem prejuízo.")
+
         # ── Total em tempo real ──────────────────────────────────────────────
-        valor_total = valor_kits + valor_avulsa
-        st.markdown(f"### 💵 Total: R$ {valor_total:.2f}")
+        valor_total = valor_kits + valor_avulsa + frete_cobrado
+        st.markdown(f"### 💵 Total do pedido: R$ {valor_total:.2f}")
 
         detalhes = []
         if valor_kits > 0 and produto:
@@ -149,6 +214,8 @@ with aba_vendas:
                 f"{qtd_avulsa} avulsa(s) "
                 f"{avulsa_sel['nome'].replace('Avulsa - ', '')}: R$ {valor_avulsa:.2f}"
             )
+        if frete_cobrado > 0:
+            detalhes.append(f"Frete: R$ {frete_cobrado:.2f}")
         if len(detalhes) > 1:
             st.caption("  +  ".join(detalhes))
 
@@ -158,28 +225,46 @@ with aba_vendas:
             st.warning("Selecione ao menos um kit ou uma unidade avulsa.")
 
         if st.button("✅ Registrar Venda", use_container_width=True, disabled=sem_item):
+            # O frete é salvo apenas no primeiro registro do pedido
+            primeiro = True
             if adicionar_kit and produto and qtd_kits > 0:
-                salvar_venda(produto["id"], qtd_kits, valor_kits, tipo="kit")
+                salvar_venda(
+                    produto["id"], qtd_kits, valor_kits, tipo="kit",
+                    frete_cobrado=frete_cobrado if primeiro else 0,
+                    frete_real=frete_real if primeiro else 0,
+                )
+                primeiro = False
             if adicionar_avulsa and avulsa_sel and qtd_avulsa > 0:
-                # FIX: usa o ID do produto avulso próprio (não mais o kit_id)
-                salvar_venda(avulsa_sel["id"], qtd_avulsa, valor_avulsa, tipo="avulsa")
+                salvar_venda(
+                    avulsa_sel["id"], qtd_avulsa, valor_avulsa, tipo="avulsa",
+                    frete_cobrado=frete_cobrado if primeiro else 0,
+                    frete_real=frete_real if primeiro else 0,
+                )
             st.success(f"Venda registrada! **R$ {valor_total:.2f}**")
-            st.rerun()  # FIX: removido st.balloons() antes do rerun
+            st.rerun()
 
 
 # ── ABA 2: DASHBOARD ─────────────────────────────────────────────────────────
 with aba_dashboard:
     st.subheader("Resumo Financeiro")
     data_ini, data_fim = seletor_periodo("dash")
-    faturamento, custo, lucro = buscar_metricas(data_ini, data_fim)
-    margem = (lucro / faturamento * 100) if faturamento > 0 else 0
+    m = buscar_metricas(data_ini, data_fim)
+
+    faturamento  = m["faturamento"]
+    custo        = m["custo"]
+    lucro        = m["lucro"]
+    lucro_frete  = m["lucro_frete"]
+    margem       = (lucro / faturamento * 100) if faturamento > 0 else 0
 
     c1, c2 = st.columns(2)
     c3, c4 = st.columns(2)
-    c1.metric("💰 Faturamento",  f"R$ {faturamento:,.2f}")
-    c2.metric("🧾 Custos (CMV)", f"R$ {custo:,.2f}")
-    c3.metric("📈 Lucro Bruto",  f"R$ {lucro:,.2f}")
-    c4.metric("📊 Margem",       f"{margem:.1f}%")
+    c5, _  = st.columns(2)
+
+    c1.metric("💰 Faturamento",     f"R$ {faturamento:,.2f}")
+    c2.metric("🧾 Custos (CMV)",    f"R$ {custo:,.2f}")
+    c3.metric("📈 Lucro Bruto",     f"R$ {lucro:,.2f}")
+    c4.metric("📊 Margem",          f"{margem:.1f}%")
+    c5.metric("🚗 Lucro c/ Frete",  f"R$ {lucro_frete:,.2f}")
 
     if faturamento == 0:
         st.info("Nenhuma venda no período.")
@@ -194,7 +279,7 @@ with aba_historico:
     if df.empty:
         st.info("Nenhuma venda no período selecionado.")
     else:
-        colunas_visiveis = ["ID", "Data", "Tipo", "Produto", "Qtd", "Total (R$)"]
+        colunas_visiveis = ["ID", "Data", "Tipo", "Produto", "Qtd", "Produtos (R$)", "Frete"]
         st.dataframe(df[colunas_visiveis], hide_index=True, use_container_width=True)
         st.caption(f"{len(df)} venda(s) encontrada(s).")
 
@@ -202,8 +287,8 @@ with aba_historico:
 
         with st.expander("✏️ Editar uma venda"):
             with st.form("form_editar_venda"):
-                id_editar = st.number_input("ID da venda:", min_value=1, step=1, key="id_ed")
-                linha     = df[df["ID"] == id_editar]
+                id_editar        = st.number_input("ID da venda:", min_value=1, step=1, key="id_ed")
+                linha            = df[df["ID"] == id_editar]
                 preco_unit_atual = float(linha["_preco_unit"].values[0]) if not linha.empty else 0.0
                 qtd_atual        = int(linha["Qtd"].values[0])           if not linha.empty else 1
 
@@ -232,7 +317,6 @@ with aba_gerenciar:
 
     produtos = buscar_produtos()
     if produtos:
-        # Exibe kits e avulsas em seções separadas
         kits_tab    = [p for p in produtos if "Avulsa" not in p["nome"]]
         avulsas_tab = [p for p in produtos if "Avulsa" in p["nome"]]
 
