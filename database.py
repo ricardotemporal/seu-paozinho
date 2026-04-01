@@ -2,7 +2,7 @@ from __future__ import annotations
 import re
 import streamlit as st
 from supabase import create_client, Client
-from datetime import datetime, date
+from datetime import datetime, date, timezone, timedelta
 import pandas as pd
 
 
@@ -35,7 +35,7 @@ def salvar_venda(
     frete_real: float = 0.0,
 ) -> None:
     get_supabase().table("vendas").insert({
-        "data_venda":    datetime.now().isoformat(),
+        "data_venda":    datetime.now(timezone(timedelta(hours=-3))).isoformat(),
         "produto_id":    produto_id,
         "quantidade":    quantidade,
         "valor_total":   valor_total,
