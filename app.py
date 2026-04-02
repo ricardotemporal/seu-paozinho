@@ -126,6 +126,9 @@ aba_vendas, aba_dashboard, aba_historico, aba_gerenciar = st.tabs([
 ])
 
 # ── ABA 1: LANÇAMENTO DE VENDA ───────────────────────────────────────────────
+if "carrinho" not in st.session_state:
+    st.session_state.carrinho = []
+
 with aba_vendas:
     st.subheader("Registrar Venda")
     produtos = buscar_produtos()
@@ -145,40 +148,71 @@ with aba_vendas:
         st.caption("🔵 TRAD. = Tradicional (10 pães)   |   🟠 BABY = Baby (20 pães)")
         st.divider()
 
-        # ── Kits (opcional) ──────────────────────────────────────────────────
-        adicionar_kit = st.checkbox("Adicionar kit(s)?", value=True)
-        produto       = None
-        qtd_kits      = 0
-        valor_kits    = 0.0
+        # ── Adicionar item ao pedido ─────────────────────────────────────────
+        tipo_item = st.radio(
+            "Tipo de item:",
+            ["🧺 Kit", "🍞 Avulsa"],
+            horizontal=True,
+            key="tipo_item",
+        )
 
-        if adicionar_kit:
+        if tipo_item == "🧺 Kit":
             idx = st.radio(
                 "Escolha o kit:",
                 range(len(kits)),
                 format_func=lambda i: label_kit(kits[i]),
                 key="radio_kit",
             )
-            produto    = kits[idx]
-            qtd_kits   = st.number_input("Quantidade de kits:", min_value=1, value=1, step=1)
-            valor_kits = produto["preco_venda"] * qtd_kits
-
-        # ── Avulsas (opcional) ───────────────────────────────────────────────
-        st.markdown("---")
-        adicionar_avulsa = st.checkbox("Adicionar unidades avulsas?")
-        avulsa_sel       = None
-        qtd_avulsa       = 0
-        valor_avulsa     = 0.0
-
-        if adicionar_avulsa:
+            produto_sel = kits[idx]
+            qtd_item    = st.number_input("Quantidade:", min_value=1, value=1, step=1, key="qtd_item")
+            valor_item  = produto_sel["preco_venda"] * qtd_item
+            tipo_db     = "kit"
+        else:
             idx_av = st.radio(
                 "Sabor da avulsa:",
                 range(len(avulsas)),
                 format_func=lambda i: label_avulsa(avulsas[i]),
                 key="radio_avulsa",
             )
-            avulsa_sel   = avulsas[idx_av]
-            qtd_avulsa   = st.number_input("Quantas unidades avulsas?", min_value=1, value=1, step=1)
-            valor_avulsa = avulsa_sel["preco_venda"] * qtd_avulsa
+            produto_sel = avulsas[idx_av]
+            qtd_item    = st.number_input("Quantidade:", min_value=1, value=1, step=1, key="qtd_avulsa")
+            valor_item  = produto_sel["preco_venda"] * qtd_item
+            tipo_db     = "avulsa"
+
+        st.caption(f"Subtotal: **R$ {valor_item:.2f}**")
+
+        if st.button("➕ Adicionar ao pedido", use_container_width=True):
+            st.session_state.carrinho.append({
+                "produto_id":  produto_sel["id"],
+                "nome":        produto_sel["nome"],
+                "quantidade":  qtd_item,
+                "valor_total": valor_item,
+                "tipo":        tipo_db,
+            })
+            st.rerun()
+
+        # ── Carrinho ─────────────────────────────────────────────────────────
+        st.markdown("---")
+        carrinho = st.session_state.carrinho
+
+        if carrinho:
+            st.markdown("### 🛒 Pedido atual")
+            total_itens = 0.0
+            for i, item in enumerate(carrinho):
+                icone = "🧺" if item["tipo"] == "kit" else "🍞"
+                col_desc, col_btn = st.columns([5, 1])
+                with col_desc:
+                    st.caption(
+                        f"{icone} {item['quantidade']}x {item['nome']}  —  "
+                        f"R$ {item['valor_total']:.2f}"
+                    )
+                with col_btn:
+                    if st.button("🗑️", key=f"rm_{i}"):
+                        st.session_state.carrinho.pop(i)
+                        st.rerun()
+                total_itens += item["valor_total"]
+        else:
+            total_itens = 0.0
 
         # ── Frete (opcional) ─────────────────────────────────────────────────
         st.markdown("---")
@@ -208,52 +242,33 @@ with aba_vendas:
                 st.caption("Frete empatado — sem lucro nem prejuízo.")
 
         # ── Total em tempo real ──────────────────────────────────────────────
-        valor_total = valor_kits + valor_avulsa + frete_cobrado
+        valor_total = total_itens + frete_cobrado
         st.markdown(f"### 💵 Total do pedido: R$ {valor_total:.2f}")
 
-        detalhes = []
-        if valor_kits > 0 and produto:
-            detalhes.append(f"{qtd_kits} kit(s) {produto['nome']}: R$ {valor_kits:.2f}")
-        if valor_avulsa > 0 and avulsa_sel:
-            detalhes.append(
-                f"{qtd_avulsa} avulsa(s) "
-                f"{avulsa_sel['nome'].replace('Avulsa - ', '')}: R$ {valor_avulsa:.2f}"
-            )
-        if frete_cobrado > 0:
-            detalhes.append(f"Frete: R$ {frete_cobrado:.2f}")
-        if len(detalhes) > 1:
-            st.caption("  +  ".join(detalhes))
-
         # ── Registrar ────────────────────────────────────────────────────────
-        sem_item = not adicionar_kit and not adicionar_avulsa
-        sem_nada = sem_item and not tem_frete
+        sem_nada = len(carrinho) == 0 and not tem_frete
         if sem_nada:
-            st.warning("Selecione ao menos um kit, uma unidade avulsa ou um frete.")
+            st.warning("Adicione ao menos um item ou um frete ao pedido.")
 
         if st.button("✅ Registrar Venda", use_container_width=True, disabled=sem_nada):
             # O frete é salvo apenas no primeiro registro do pedido
             primeiro = True
-            if adicionar_kit and produto and qtd_kits > 0:
+            for item in carrinho:
                 salvar_venda(
-                    produto["id"], qtd_kits, valor_kits, tipo="kit",
+                    item["produto_id"], item["quantidade"], item["valor_total"],
+                    tipo=item["tipo"],
                     frete_cobrado=frete_cobrado if primeiro else 0,
                     frete_real=frete_real if primeiro else 0,
                 )
                 primeiro = False
-            if adicionar_avulsa and avulsa_sel and qtd_avulsa > 0:
-                salvar_venda(
-                    avulsa_sel["id"], qtd_avulsa, valor_avulsa, tipo="avulsa",
-                    frete_cobrado=frete_cobrado if primeiro else 0,
-                    frete_real=frete_real if primeiro else 0,
-                )
-                primeiro = False
-            # Frete avulso (sem kit nem avulsa) — registra sozinho
+            # Frete avulso (sem itens no carrinho) — registra sozinho
             if primeiro and tem_frete:
                 salvar_venda(
                     None, 0, 0.0, tipo="frete",
                     frete_cobrado=frete_cobrado,
                     frete_real=frete_real,
                 )
+            st.session_state.carrinho = []
             st.toast(f"Venda registrada! R$ {valor_total:.2f}", icon="✅")
             st.balloons()
             st.rerun()
