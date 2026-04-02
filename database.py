@@ -71,10 +71,19 @@ def salvar_venda(
     return res.data[0]["id"]
 
 
-def editar_venda(id_venda: int, nova_quantidade: int, novo_total: float) -> None:
-    get_supabase().table("vendas").update(
-        {"quantidade": nova_quantidade, "valor_total": novo_total}
-    ).eq("id", id_venda).execute()
+def editar_venda(
+    id_venda: int,
+    nova_quantidade: int,
+    novo_total: float,
+    novo_frete_cobrado: float | None = None,
+    novo_frete_real: float | None = None,
+) -> None:
+    campos: dict = {"quantidade": nova_quantidade, "valor_total": novo_total}
+    if novo_frete_cobrado is not None:
+        campos["frete_cobrado"] = novo_frete_cobrado
+    if novo_frete_real is not None:
+        campos["frete_real"] = novo_frete_real
+    get_supabase().table("vendas").update(campos).eq("id", id_venda).execute()
     _limpar_cache_vendas()
 
 
@@ -168,7 +177,9 @@ def buscar_historico(data_inicio: date, data_fim: date) -> pd.DataFrame:
             "Qtd":          qtd,
             "Produtos (R$)":f"R$ {v['valor_total']:.2f}",
             "Frete":        frete_label,
-            "_preco_unit":  round(v["valor_total"] / qtd, 4) if qtd > 0 else 0,
-            "_produto_id":  v["produto_id"],
+            "_preco_unit":    round(v["valor_total"] / qtd, 4) if qtd > 0 else 0,
+            "_produto_id":   v["produto_id"],
+            "_frete_cobrado": fc,
+            "_frete_real":    fr,
         })
     return pd.DataFrame(rows)

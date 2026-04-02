@@ -306,14 +306,34 @@ with aba_historico:
                 linha            = df[df["ID"] == id_editar]
                 preco_unit_atual = float(linha["_preco_unit"].values[0]) if not linha.empty else 0.0
                 qtd_atual        = int(linha["Qtd"].values[0])           if not linha.empty else 1
+                fc_atual         = float(linha["_frete_cobrado"].values[0]) if not linha.empty else 0.0
+                fr_atual         = float(linha["_frete_real"].values[0])    if not linha.empty else 0.0
 
-                nova_qtd   = st.number_input("Nova quantidade:", min_value=1, value=qtd_atual, step=1)
+                nova_qtd   = st.number_input("Nova quantidade:", min_value=0, value=qtd_atual, step=1)
                 novo_total = preco_unit_atual * nova_qtd
-                st.caption(f"Novo total: **R$ {novo_total:.2f}**")
+                st.caption(f"Novo total produtos: **R$ {novo_total:.2f}**")
+
+                st.markdown("---")
+                st.caption("Frete (deixe 0 se não houver)")
+                ce1, ce2 = st.columns(2)
+                with ce1:
+                    novo_fc = st.number_input(
+                        "Cobrado (R$):", min_value=0.0, value=fc_atual,
+                        step=0.50, format="%.2f", key="ed_fc",
+                    )
+                with ce2:
+                    novo_fr = st.number_input(
+                        "Pago no app (R$):", min_value=0.0, value=fr_atual,
+                        step=0.50, format="%.2f", key="ed_fr",
+                    )
 
                 if st.form_submit_button("💾 Salvar edição", use_container_width=True):
-                    editar_venda(int(id_editar), nova_qtd, novo_total)
-                    st.success(f"Venda #{int(id_editar)} atualizada!")
+                    editar_venda(
+                        int(id_editar), nova_qtd, novo_total,
+                        novo_frete_cobrado=novo_fc,
+                        novo_frete_real=novo_fr,
+                    )
+                    st.toast(f"Venda #{int(id_editar)} atualizada!", icon="✅")
                     st.rerun()
 
         with st.expander("🗑️ Excluir uma venda"):
@@ -321,7 +341,7 @@ with aba_historico:
                 id_excluir = st.number_input("ID da venda:", min_value=1, step=1, key="id_ex")
                 if st.form_submit_button("🗑️ Excluir", use_container_width=True):
                     excluir_venda(int(id_excluir))
-                    st.success(f"Venda #{int(id_excluir)} excluída!")
+                    st.toast(f"Venda #{int(id_excluir)} excluída!", icon="🗑️")
                     st.rerun()
 
 
