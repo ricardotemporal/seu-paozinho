@@ -167,11 +167,16 @@ def buscar_historico(data_inicio: date, data_fim: date) -> pd.DataFrame:
         fc    = v.get("frete_cobrado") or 0
         fr    = v.get("frete_real")    or 0
 
+        # Converte UTC → UTC-3 para exibição correta
+        dt_raw = datetime.fromisoformat(v["data_venda"])
+        dt_br  = dt_raw.astimezone(TZ_BR)
+        data_formatada = dt_br.strftime("%Y-%m-%d %H:%M")
+
         frete_label = f"R$ {fc:.2f} (pago R$ {fr:.2f})" if fc > 0 else "—"
 
         rows.append({
             "ID":           v["id"],
-            "Data":         v["data_venda"][:16].replace("T", " "),
+            "Data":         data_formatada,
             "Tipo":         "🧺 Kit" if tipo == "kit" else ("🍞 Avulsa" if tipo == "avulsa" else "🚗 Frete"),
             "Produto":      nome,
             "Qtd":          qtd,
