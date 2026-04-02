@@ -226,10 +226,11 @@ with aba_vendas:
 
         # ── Registrar ────────────────────────────────────────────────────────
         sem_item = not adicionar_kit and not adicionar_avulsa
-        if sem_item:
-            st.warning("Selecione ao menos um kit ou uma unidade avulsa.")
+        sem_nada = sem_item and not tem_frete
+        if sem_nada:
+            st.warning("Selecione ao menos um kit, uma unidade avulsa ou um frete.")
 
-        if st.button("✅ Registrar Venda", use_container_width=True, disabled=sem_item):
+        if st.button("✅ Registrar Venda", use_container_width=True, disabled=sem_nada):
             # O frete é salvo apenas no primeiro registro do pedido
             primeiro = True
             if adicionar_kit and produto and qtd_kits > 0:
@@ -245,7 +246,16 @@ with aba_vendas:
                     frete_cobrado=frete_cobrado if primeiro else 0,
                     frete_real=frete_real if primeiro else 0,
                 )
-            st.success(f"Venda registrada! **R$ {valor_total:.2f}**")
+                primeiro = False
+            # Frete avulso (sem kit nem avulsa) — registra sozinho
+            if primeiro and tem_frete:
+                salvar_venda(
+                    None, 0, 0.0, tipo="frete",
+                    frete_cobrado=frete_cobrado,
+                    frete_real=frete_real,
+                )
+            st.toast(f"Venda registrada! R$ {valor_total:.2f}", icon="✅")
+            st.balloons()
             st.rerun()
 
 

@@ -27,23 +27,27 @@ def atualizar_produto(id_produto: int, novo_preco: float, novo_custo: float) -> 
 
 # ── Vendas ────────────────────────────────────────────────────────────────────
 def salvar_venda(
-    produto_id: int,
+    produto_id: int | None,
     quantidade: int,
     valor_total: float,
     tipo: str = "kit",
     frete_cobrado: float = 0.0,
     frete_real: float = 0.0,
-) -> None:
-    get_supabase().table("vendas").insert({
+) -> int:
+    """Salva venda e retorna o ID do registro criado."""
+    row = {
         "data_venda":    datetime.now(timezone(timedelta(hours=-3))).isoformat(),
-        "produto_id":    produto_id,
         "quantidade":    quantidade,
         "valor_total":   valor_total,
         "tipo":          tipo,
         "frete_cobrado": frete_cobrado,
         "frete_real":    frete_real,
-    }).execute()
+    }
+    if produto_id is not None:
+        row["produto_id"] = produto_id
+    res = get_supabase().table("vendas").insert(row).execute()
     st.cache_data.clear()
+    return res.data[0]["id"]
 
 
 def editar_venda(id_venda: int, nova_quantidade: int, novo_total: float) -> None:
@@ -85,7 +89,7 @@ def buscar_metricas(data_inicio: date, data_fim: date) -> dict:
         faturamento  += v["valor_total"] + fc
         lucro_frete  += fc - fr
 
-        if not v["produtos"]:
+        if not v.get("produtos"):
             continue
 
         custo_prod = v["produtos"]["custo_estimado"]
@@ -126,8 +130,8 @@ def buscar_historico(data_inicio: date, data_fim: date) -> pd.DataFrame:
     rows = []
     for v in res.data:
         tipo  = v.get("tipo", "kit")
-        nome  = v["produtos"]["nome"] if v["produtos"] else "—"
-        qtd   = v["quantidade"] or 1
+        nome  = v["produtos"]["nome"] if v.get("produtos") else "—"
+        qtd   = v["quantidade"] if v["quantidade"] else 0
         fc    = v.get("frete_cobrado") or 0
         fr    = v.get("frete_real")    or 0
 
@@ -136,12 +140,12 @@ def buscar_historico(data_inicio: date, data_fim: date) -> pd.DataFrame:
         rows.append({
             "ID":           v["id"],
             "Data":         v["data_venda"][:16].replace("T", " "),
-            "Tipo":         "🧺 Kit" if tipo == "kit" else "🍞 Avulsa",
+            "Tipo":         "🧺 Kit" if tipo == "kit" else ("🍞 Avulsa" if tipo == "avulsa" else "🚗 Frete"),
             "Produto":      nome,
             "Qtd":          qtd,
             "Produtos (R$)":f"R$ {v['valor_total']:.2f}",
             "Frete":        frete_label,
-            "_preco_unit":  round(v["valor_total"] / qtd, 4),
+            "_preco_unit":  round(v["valor_total"] / qtd, 4) if qtd > 0 else 0,
             "_produto_id":  v["produto_id"],
         })
     return pd.DataFrame(rows)
