@@ -2,8 +2,10 @@ from __future__ import annotations
 import re
 import streamlit as st
 from supabase import create_client, Client
-from datetime import datetime, date, timezone, timedelta
+from datetime import datetime, date, time, timezone, timedelta
 import pandas as pd
+
+TZ_BR = timezone(timedelta(hours=-3))
 
 
 # ── Conexão ──────────────────────────────────────────────────────────────────
@@ -18,11 +20,22 @@ def buscar_produtos() -> list[dict]:
     return get_supabase().table("produtos").select("*").order("id").execute().data
 
 
+def _limpar_cache_vendas() -> None:
+    """Invalida caches que dependem de dados de vendas."""
+    buscar_historico.clear()
+    buscar_metricas.clear()
+
+
+def _limpar_cache_produtos() -> None:
+    """Invalida caches que dependem de dados de produtos."""
+    buscar_produtos.clear()
+
+
 def atualizar_produto(id_produto: int, novo_preco: float, novo_custo: float) -> None:
     get_supabase().table("produtos").update(
         {"preco_venda": novo_preco, "custo_estimado": novo_custo}
     ).eq("id", id_produto).execute()
-    st.cache_data.clear()
+    _limpar_cache_produtos()
 
 
 # ── Vendas ────────────────────────────────────────────────────────────────────
@@ -35,8 +48,16 @@ def salvar_venda(
     frete_real: float = 0.0,
 ) -> int:
     """Salva venda e retorna o ID do registro criado."""
+    if tipo not in ("kit", "avulsa", "frete"):
+        raise ValueError(f"Tipo de venda inválido: {tipo}")
+    if quantidade < 0:
+        raise ValueError("Quantidade não pode ser negativa.")
+    if valor_total < 0:
+        raise ValueError("Valor total não pode ser negativo.")
+    if frete_cobrado < 0 or frete_real < 0:
+        raise ValueError("Valores de frete não podem ser negativos.")
     row = {
-        "data_venda":    datetime.now(timezone(timedelta(hours=-3))).isoformat(),
+        "data_venda":    datetime.now(TZ_BR).isoformat(),
         "quantidade":    quantidade,
         "valor_total":   valor_total,
         "tipo":          tipo,
@@ -46,7 +67,7 @@ def salvar_venda(
     if produto_id is not None:
         row["produto_id"] = produto_id
     res = get_supabase().table("vendas").insert(row).execute()
-    st.cache_data.clear()
+    _limpar_cache_vendas()
     return res.data[0]["id"]
 
 
@@ -54,14 +75,15 @@ def editar_venda(id_venda: int, nova_quantidade: int, novo_total: float) -> None
     get_supabase().table("vendas").update(
         {"quantidade": nova_quantidade, "valor_total": novo_total}
     ).eq("id", id_venda).execute()
-    st.cache_data.clear()
+    _limpar_cache_vendas()
 
 
 def excluir_venda(id_venda: int) -> None:
     get_supabase().table("vendas").delete().eq("id", id_venda).execute()
-    st.cache_data.clear()
+    _limpar_cache_vendas()
 
 
+@st.cache_data(ttl=120)
 def buscar_metricas(data_inicio: date, data_fim: date) -> dict:
     """
     Retorna dicionário com:
@@ -70,8 +92,8 @@ def buscar_metricas(data_inicio: date, data_fim: date) -> dict:
       lucro        — faturamento - custo
       lucro_frete  — frete_cobrado - frete_real (lucro só do frete)
     """
-    inicio_str = datetime.combine(data_inicio, datetime.min.time()).isoformat()
-    fim_str    = datetime.combine(data_fim,    datetime.max.time()).isoformat()
+    inicio_str = datetime.combine(data_inicio, time.min, tzinfo=TZ_BR).isoformat()
+    fim_str    = datetime.combine(data_fim,    time.max, tzinfo=TZ_BR).isoformat()
 
     res = (
         get_supabase().table("vendas")
@@ -114,9 +136,10 @@ def buscar_metricas(data_inicio: date, data_fim: date) -> dict:
     }
 
 
+@st.cache_data(ttl=120)
 def buscar_historico(data_inicio: date, data_fim: date) -> pd.DataFrame:
-    inicio_str = datetime.combine(data_inicio, datetime.min.time()).isoformat()
-    fim_str    = datetime.combine(data_fim,    datetime.max.time()).isoformat()
+    inicio_str = datetime.combine(data_inicio, time.min, tzinfo=TZ_BR).isoformat()
+    fim_str    = datetime.combine(data_fim,    time.max, tzinfo=TZ_BR).isoformat()
 
     res = (
         get_supabase().table("vendas")
