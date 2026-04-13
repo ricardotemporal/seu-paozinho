@@ -2,6 +2,7 @@ from __future__ import annotations
 import functools
 import re
 from io import BytesIO
+from pathlib import Path
 
 import streamlit as st
 
@@ -115,8 +116,10 @@ def gerar_cardapio_pdf(produtos: list[dict]) -> bytes:
     from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
     from reportlab.lib.units import cm
     from reportlab.platypus import (
-        Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle,
+        Image, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle,
     )
+
+    produtos = [p for p in produtos if "avulsa" not in p["nome"].lower()]
 
     AMARELO = colors.HexColor("#FFD700")
     MARROM  = colors.HexColor("#4A2C00")
@@ -150,10 +153,21 @@ def gerar_cardapio_pdf(produtos: list[dict]) -> bytes:
         fontSize=9, alignment=1,
     )
 
-    elems: list = [
-        Paragraph("Seu Pãozinho 🍞", estilo_titulo),
-        Paragraph("Pão Delícia da Bahia — Cardápio", estilo_sub),
-    ]
+    elems: list = []
+    logo_path = Path(__file__).resolve().parent / "SeuPaozinho.jpg"
+    if logo_path.exists():
+        try:
+            logo = Image(str(logo_path))
+            ratio = logo.imageHeight / logo.imageWidth
+            logo.drawWidth = 180
+            logo.drawHeight = 180 * ratio
+            logo.hAlign = "CENTER"
+            elems.append(logo)
+            elems.append(Spacer(1, 0.3 * cm))
+        except Exception:
+            pass
+    elems.append(Paragraph("Seu Pãozinho 🍞", estilo_titulo))
+    elems.append(Paragraph("Pão Delícia da Bahia — Cardápio", estilo_sub))
 
     secoes: dict[str, tuple[str, list[dict]]] = {
         "sem_recheio": ("Kit Sem Recheio", []),
