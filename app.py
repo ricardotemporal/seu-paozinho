@@ -1,7 +1,7 @@
-import streamlit as st
-import re
 from datetime import date, timedelta
+
 import pandas as pd
+import streamlit as st
 
 from database import (
     atualizar_produto,
@@ -11,6 +11,13 @@ from database import (
     editar_venda,
     excluir_venda,
     salvar_venda,
+)
+from utils import (
+    eh_baby,
+    gerar_cardapio_pdf,
+    label_avulsa,
+    label_kit,
+    separar_produtos,
 )
 
 # =============================================================================
@@ -43,61 +50,10 @@ st.markdown("""
 
 
 # =============================================================================
-# HELPERS
+# HELPERS LOCAIS
 # =============================================================================
-def qtd_do_kit(tamanho: str) -> int:
-    m = re.search(r"(\d+)\s*un", tamanho or "", re.IGNORECASE)
-    return int(m.group(1)) if m else 1
-
-
-def label_kit(p: dict) -> str:
-    """
-    Monta label do kit com destaque visual para Baby e Tradicional.
-    Usa prefixo colorido via emoji para diferenciar no mobile.
-    """
-    nome   = p["nome"]
-    qtd    = qtd_do_kit(p["tamanho"])
-    preco  = p["preco_venda"]
-
-    if "Baby" in nome:
-        prefixo = "🟠 BABY     "
-    elif "Tradicional" in nome or "Trad." in nome:
-        prefixo = "🔵 TRAD.   "
-    else:
-        prefixo = "⚪ "
-
-    # Remove a palavra do nome para não repetir — já está no prefixo
-    nome_curto = (
-        nome.replace(" Tradicional", "")
-            .replace(" Baby", "")
-            .replace(" Trad.", "")
-    )
-    return f"{prefixo} {nome_curto}  ({qtd} pães)  R$ {preco:.2f}"
-
-
-def label_avulsa(p: dict) -> str:
-    """Label da avulsa com destaque Baby/Tradicional."""
-    nome  = p["nome"]
-    preco = p["preco_venda"]
-
-    if "Baby" in nome:
-        prefixo = "🟠 BABY     "
-    elif "Trad." in nome or "Tradicional" in nome:
-        prefixo = "🔵 TRAD.   "
-    else:
-        prefixo = "⚪ "
-
-    nome_curto = (
-        nome.replace("Avulsa - ", "")
-            .replace(" Tradicional", "")
-            .replace(" Baby", "")
-            .replace(" Trad.", "")
-    )
-    return f"{prefixo} {nome_curto}  R$ {preco:.2f}/un"
-
-
 def seletor_periodo(chave: str) -> tuple[date, date]:
-    hoje  = date.today()
+    hoje = date.today()
     opcoes = {
         "📅 Hoje":          (hoje, hoje),
         "🗓️ Esta semana":   (hoje - timedelta(days=hoje.weekday()), hoje),
@@ -121,8 +77,8 @@ def seletor_periodo(chave: str) -> tuple[date, date]:
 # =============================================================================
 st.title("🍞 Seu Pãozinho")
 
-aba_vendas, aba_dashboard, aba_historico, aba_gerenciar = st.tabs([
-    "💰 Venda", "📊 Dashboard", "📝 Histórico", "⚙️ Produtos",
+aba_vendas, aba_dashboard, aba_historico, aba_gerenciar, aba_cardapio = st.tabs([
+    "💰 Venda", "📊 Dashboard", "📝 Histórico", "⚙️ Produtos", "📄 Cardápio",
 ])
 
 # ── ABA 1: LANÇAMENTO DE VENDA ───────────────────────────────────────────────
@@ -136,15 +92,8 @@ with aba_vendas:
     if not produtos:
         st.warning("Nenhum produto cadastrado.")
     else:
-        # Ordena: todos os Tradicionais primeiro, depois todos os Baby
-        kits_raw = [p for p in produtos if "Avulsa" not in p["nome"]]
-        kits     = (
-            [p for p in kits_raw if "Baby" not in p["nome"]] +
-            [p for p in kits_raw if "Baby"     in p["nome"]]
-        )
-        avulsas = [p for p in produtos if "Avulsa" in p["nome"]]
+        kits, avulsas = separar_produtos(produtos)
 
-        # Legenda de cores
         st.caption("🔵 TRAD. = Tradicional (10 pães)   |   🟠 BABY = Baby (20 pães)")
         st.divider()
 
@@ -156,6 +105,10 @@ with aba_vendas:
             key="tipo_item",
         )
 
+        personalizado = False
+        gramatura = None
+        preco_combinado = 0.0
+
         if tipo_item == "🧺 Kit":
             idx = st.radio(
                 "Escolha o kit:",
@@ -164,9 +117,42 @@ with aba_vendas:
                 key="radio_kit",
             )
             produto_sel = kits[idx]
-            qtd_item    = st.number_input("Quantidade:", min_value=1, value=1, step=1, key="qtd_item")
-            valor_item  = produto_sel["preco_venda"] * qtd_item
-            tipo_db     = "kit"
+
+            personalizado = st.checkbox(
+                "✏️ Pedido personalizado (gramatura maior)?",
+                key="chk_personalizado",
+            )
+
+            if personalizado:
+                st.info(
+                    "Pedidos personalizados exigem **mínimo de 6 unidades**. "
+                    "Padrão atual: Tradicional 42g • Baby 13g."
+                )
+                gramatura_padrao = 13 if eh_baby(produto_sel["nome"]) else 42
+                cg1, cg2 = st.columns(2)
+                with cg1:
+                    gramatura = st.number_input(
+                        "Gramatura desejada (g/unidade):",
+                        min_value=1, value=gramatura_padrao, step=1,
+                        key="gramatura_pers",
+                    )
+                with cg2:
+                    preco_combinado = st.number_input(
+                        "Preço combinado (R$/unidade):",
+                        min_value=0.0, value=0.0, step=0.50,
+                        format="%.2f", key="preco_pers",
+                    )
+
+            qtd_item = st.number_input(
+                "Quantidade:", min_value=1, value=1, step=1, key="qtd_item",
+            )
+
+            if personalizado:
+                valor_item = preco_combinado * qtd_item
+                tipo_db    = "personalizado"
+            else:
+                valor_item = produto_sel["preco_venda"] * qtd_item
+                tipo_db    = "kit"
         else:
             idx_av = st.radio(
                 "Sabor da avulsa:",
@@ -181,29 +167,48 @@ with aba_vendas:
 
         st.caption(f"Subtotal: **R$ {valor_item:.2f}**")
 
-        if st.button("➕ Adicionar ao pedido", use_container_width=True):
-            st.session_state.carrinho.append({
+        # Validação do pedido personalizado
+        bloqueio_personalizado = False
+        if personalizado:
+            if qtd_item < 6:
+                st.warning("⚠️ Pedido personalizado exige no mínimo 6 unidades.")
+                bloqueio_personalizado = True
+            if preco_combinado <= 0:
+                st.warning("⚠️ Informe o preço combinado com o cliente.")
+                bloqueio_personalizado = True
+
+        if st.button(
+            "➕ Adicionar ao pedido",
+            use_container_width=True,
+            disabled=bloqueio_personalizado,
+        ):
+            item = {
                 "produto_id":  produto_sel["id"],
                 "nome":        produto_sel["nome"],
                 "quantidade":  qtd_item,
                 "valor_total": valor_item,
                 "tipo":        tipo_db,
-            })
+                "observacao":  f"{int(gramatura)}g/unidade" if personalizado else None,
+            }
+            st.session_state.carrinho.append(item)
             st.rerun()
 
         # ── Carrinho ─────────────────────────────────────────────────────────
         st.markdown("---")
         carrinho = st.session_state.carrinho
 
+        icones_tipo = {"kit": "🧺", "avulsa": "🍞", "personalizado": "✏️"}
+
         if carrinho:
             st.markdown("### 🛒 Pedido atual")
             total_itens = 0.0
             for i, item in enumerate(carrinho):
-                icone = "🧺" if item["tipo"] == "kit" else "🍞"
+                icone = icones_tipo.get(item["tipo"], "•")
+                obs   = f" _({item['observacao']})_" if item.get("observacao") else ""
                 col_desc, col_btn = st.columns([5, 1])
                 with col_desc:
                     st.caption(
-                        f"{icone} {item['quantidade']}x {item['nome']}  —  "
+                        f"{icone} {item['quantidade']}x {item['nome']}{obs}  —  "
                         f"R$ {item['valor_total']:.2f}"
                     )
                 with col_btn:
@@ -226,12 +231,12 @@ with aba_vendas:
             with cf1:
                 frete_cobrado = st.number_input(
                     "💰 Cobrado do cliente (R$):",
-                    min_value=0.0, value=10.0, step=0.50, format="%.2f"
+                    min_value=0.0, value=10.0, step=0.50, format="%.2f",
                 )
             with cf2:
                 frete_real = st.number_input(
                     "📱 Pago no app (R$):",
-                    min_value=0.0, value=0.0, step=0.50, format="%.2f"
+                    min_value=0.0, value=0.0, step=0.50, format="%.2f",
                 )
             lucro_frete_now = frete_cobrado - frete_real
             if lucro_frete_now > 0:
@@ -241,17 +246,14 @@ with aba_vendas:
             else:
                 st.caption("Frete empatado — sem lucro nem prejuízo.")
 
-        # ── Total em tempo real ──────────────────────────────────────────────
         valor_total = total_itens + frete_cobrado
         st.markdown(f"### 💵 Total do pedido: R$ {valor_total:.2f}")
 
-        # ── Registrar ────────────────────────────────────────────────────────
-        sem_nada = len(carrinho) == 0 and not tem_frete
-        if sem_nada:
+        pedido_vazio = len(carrinho) == 0 and not tem_frete
+        if pedido_vazio:
             st.warning("Adicione ao menos um item ou um frete ao pedido.")
 
-        if st.button("✅ Registrar Venda", use_container_width=True, disabled=sem_nada):
-            # O frete é salvo apenas no primeiro registro do pedido
+        if st.button("✅ Registrar Venda", use_container_width=True, disabled=pedido_vazio):
             primeiro = True
             for item in carrinho:
                 salvar_venda(
@@ -259,9 +261,9 @@ with aba_vendas:
                     tipo=item["tipo"],
                     frete_cobrado=frete_cobrado if primeiro else 0,
                     frete_real=frete_real if primeiro else 0,
+                    observacao=item.get("observacao"),
                 )
                 primeiro = False
-            # Frete avulso (sem itens no carrinho) — registra sozinho
             if primeiro and tem_frete:
                 salvar_venda(
                     None, 0, 0.0, tipo="frete",
@@ -280,21 +282,21 @@ with aba_dashboard:
     data_ini, data_fim = seletor_periodo("dash")
     m = buscar_metricas(data_ini, data_fim)
 
-    faturamento  = m["faturamento"]
-    custo        = m["custo"]
-    lucro        = m["lucro"]
-    lucro_frete  = m["lucro_frete"]
-    margem       = (lucro / faturamento * 100) if faturamento > 0 else 0
+    faturamento = m["faturamento"]
+    custo       = m["custo"]
+    lucro       = m["lucro"]
+    lucro_frete = m["lucro_frete"]
+    margem      = (lucro / faturamento * 100) if faturamento > 0 else 0
 
     c1, c2 = st.columns(2)
     c3, c4 = st.columns(2)
     c5, _  = st.columns(2)
 
-    c1.metric("💰 Faturamento",     f"R$ {faturamento:,.2f}")
-    c2.metric("🧾 Custos (CMV)",    f"R$ {custo:,.2f}")
-    c3.metric("📈 Lucro Bruto",     f"R$ {lucro:,.2f}")
-    c4.metric("📊 Margem",          f"{margem:.1f}%")
-    c5.metric("🚗 Lucro c/ Frete",  f"R$ {lucro_frete:,.2f}")
+    c1.metric("💰 Faturamento",    f"R$ {faturamento:,.2f}")
+    c2.metric("🧾 Custos (CMV)",   f"R$ {custo:,.2f}")
+    c3.metric("📈 Lucro Bruto",    f"R$ {lucro:,.2f}")
+    c4.metric("📊 Margem",         f"{margem:.1f}%")
+    c5.metric("🚗 Lucro c/ Frete", f"R$ {lucro_frete:,.2f}")
 
     if faturamento == 0:
         st.info("Nenhuma venda no período.")
@@ -367,8 +369,7 @@ with aba_gerenciar:
 
     produtos = buscar_produtos()
     if produtos:
-        kits_tab    = [p for p in produtos if "Avulsa" not in p["nome"]]
-        avulsas_tab = [p for p in produtos if "Avulsa" in p["nome"]]
+        kits_tab, avulsas_tab = separar_produtos(produtos)
 
         st.markdown("**🧺 Kits**")
         df_kits = pd.DataFrame(kits_tab)[["id", "nome", "tamanho", "preco_venda", "custo_estimado"]]
@@ -399,15 +400,50 @@ with aba_gerenciar:
             with cA:
                 novo_preco = st.number_input(
                     "Novo Preço (R$):", min_value=0.0,
-                    value=float(prod["preco_venda"]), format="%.2f"
+                    value=float(prod["preco_venda"]), format="%.2f",
                 )
             with cB:
                 novo_custo = st.number_input(
                     "Novo Custo (R$):", min_value=0.0,
-                    value=float(prod["custo_estimado"]), format="%.2f"
+                    value=float(prod["custo_estimado"]), format="%.2f",
                 )
 
             if st.form_submit_button("💾 Salvar alterações", use_container_width=True):
                 atualizar_produto(prod["id"], novo_preco, novo_custo)
                 st.success(f"✅ '{prod['nome']}' atualizado!")
                 st.rerun()
+
+
+# ── ABA 5: CARDÁPIO EM PDF ───────────────────────────────────────────────────
+with aba_cardapio:
+    st.subheader("Cardápio em PDF")
+    st.caption(
+        "Gere uma versão em PDF do cardápio completo, pronta para compartilhar "
+        "com clientes. Os dados são puxados do banco em tempo real."
+    )
+
+    produtos = buscar_produtos()
+    if not produtos:
+        st.warning("Nenhum produto cadastrado — não há o que gerar.")
+    else:
+        if st.button("📄 Gerar Cardápio em PDF", use_container_width=True):
+            try:
+                pdf_bytes = gerar_cardapio_pdf(produtos)
+                st.session_state["cardapio_pdf"] = pdf_bytes
+                st.success("Cardápio gerado! Clique abaixo para baixar.")
+            except ModuleNotFoundError:
+                st.error(
+                    "Biblioteca `reportlab` não instalada. "
+                    "Rode `pip install reportlab` e reinicie o app."
+                )
+            except Exception as e:
+                st.error(f"Falha ao gerar PDF: {e}")
+
+        if "cardapio_pdf" in st.session_state:
+            st.download_button(
+                label="⬇️ Baixar cardapio.pdf",
+                data=st.session_state["cardapio_pdf"],
+                file_name="cardapio_seu_paozinho.pdf",
+                mime="application/pdf",
+                use_container_width=True,
+            )
