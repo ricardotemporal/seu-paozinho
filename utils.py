@@ -194,9 +194,9 @@ def gerar_cardapio_pdf(produtos: list[dict]) -> bytes:
             pass
 
     # ── Titulo ──
-    elems.append(Paragraph("Seu Paozinho", estilo_marca))
-    elems.append(Paragraph("Pao Delicia da Bahia", estilo_sub))
-    elems.append(Paragraph("CARDAPIO", estilo_titulo))
+    elems.append(Paragraph("Seu Pãozinho", estilo_marca))
+    elems.append(Paragraph("Pao Delícia da Bahia", estilo_sub))
+    elems.append(Paragraph("CARDÁPIO", estilo_titulo))
     elems.append(Spacer(1, 0.3 * cm))
 
     # ── Separar produtos por categoria ──
@@ -333,7 +333,7 @@ def gerar_cardapio_pdf(produtos: list[dict]) -> bytes:
     elems.append(Spacer(1, 0.8 * cm))
     elems.append(Paragraph(
         "@seu.paozinho  --  (85) 98141-4010  --  "
-        "O pao delicia artesanal que aquece seu coracao",
+        "O pão delícia artesanal que aquece seu coração",
         estilo_rodape,
     ))
 
