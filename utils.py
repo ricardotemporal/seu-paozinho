@@ -195,7 +195,7 @@ def gerar_cardapio_pdf(produtos: list[dict]) -> bytes:
 
     # ── Titulo ──
     elems.append(Paragraph("Seu Pãozinho", estilo_marca))
-    elems.append(Paragraph("Pao Delícia da Bahia", estilo_sub))
+    elems.append(Paragraph("Pão Delícia da Bahia", estilo_sub))
     elems.append(Paragraph("CARDÁPIO", estilo_titulo))
     elems.append(Spacer(1, 0.3 * cm))
 
