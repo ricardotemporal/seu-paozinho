@@ -299,7 +299,7 @@ def gerar_cardapio_pdf(produtos: list[dict]) -> bytes:
                                fontName="Helvetica-Bold", textColor=MARROM),
             )
 
-            rows = [["Recheios", header_trad, header_baby]]
+            rows = [["RECHEIO", header_trad, header_baby]]
             for nome in todos_nomes:
                 pt = trads.get(nome)
                 pb = babys.get(nome)
